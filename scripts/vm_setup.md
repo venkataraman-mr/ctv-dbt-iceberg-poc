@@ -41,29 +41,53 @@ applies, and confirm you can talk to Docker **without sudo**:
 docker info >/dev/null && echo "docker OK (no sudo)"
 ```
 
-## Stage 3 — Install Docker Compose v2
+## Stage 3 — Install Docker Compose v2 + buildx
+The AL2023 `docker` package ships neither the Compose v2 plugin nor buildx; `compose build`
+needs **both** (buildx ≥ 0.17). Install both CLI plugins:
 ```bash
 sudo mkdir -p /usr/local/lib/docker/cli-plugins
+
+# Compose v2
 sudo curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
   -o /usr/local/lib/docker/cli-plugins/docker-compose
 sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-docker compose version
+
+# buildx (required by `docker compose build`)
+BUILDX_VER=$(curl -s https://api.github.com/repos/docker/buildx/releases/latest | grep tag_name | cut -d '"' -f4)
+sudo curl -SL "https://github.com/docker/buildx/releases/download/${BUILDX_VER}/buildx-${BUILDX_VER}.linux-amd64" \
+  -o /usr/local/lib/docker/cli-plugins/docker-buildx
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+
+docker compose version && docker buildx version
 ```
-✓ expect: a Compose v2 version prints.
+✓ expect: a Compose v2 version **and** a buildx version print.
 
 ## Stage 4 — Create `.env` + the Nessie data dir
 `.env` is **not** in the repo (it holds secrets — GitHub blocks committed keys), so put it on the
-VM manually: copy your local `.env` across (`scp`, or paste into `nano .env`). Then verify + make
-the data dir:
+VM manually. First fill the real S3 key/secret + Azure storage key into your **local** `.env`,
+then copy it over.
+
+**From your laptop (PowerShell)** — scp the local file to the VM (same key/host you SSH with):
+```powershell
+scp -i "C:\Users\venkata.adapa\Downloads\aws_key.pem" "C:\work\CTV_dbt_iceberg_poc\.env" ec2-user@3.145.213.86:/home/ec2-user/CTV_dbt_iceberg_poc/.env
+```
+Alternatively, on the VM: `nano .env` and paste the contents.
+
+**Then on the VM** — strip Windows line endings, view, verify, and make the data dir:
 ```bash
-test -f .env && echo ".env present" || echo "!! create .env first (copy from your local copy)"
-# confirm the required secrets are filled (only PG_* placeholders may remain for now):
+cd ~/CTV_dbt_iceberg_poc
+sed -i 's/\r$//' .env          # strip Windows CRLF (a trailing \r breaks values like WAREHOUSE)
+cat -A .env | head             # view: line ends should be `$`, NOT `^M$`
+# confirm required secrets are filled (only PG_* placeholders may remain for now):
 grep -E 'REPLACE_(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AZURE_STORAGE_ACCOUNT_KEY)' .env \
   && echo "!! fill these in .env first" || echo "AWS/Azure secrets set"
-# create the Nessie RocksDB dir (on the EBS-backed disk):
+# Nessie RocksDB dir (on the EBS-backed disk):
 mkdir -p "$(grep -E '^NESSIE_DATA_DIR=' .env | cut -d= -f2-)"
 ```
-✓ expect: ".env present", "AWS/Azure secrets set", and the dir created.
+✓ expect: line ends show as `$` (not `^M$`), "AWS/Azure secrets set", and the dir created.
+
+> The CRLF strip matters because the file is authored on Windows — a trailing `\r` can sneak into
+> values (e.g. `s3://…/warehouse`) and cause odd failures in Docker Compose.
 
 ## Stage 5 — 💾 Pre-build disk check
 ```bash
