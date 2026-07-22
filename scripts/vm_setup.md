@@ -14,12 +14,12 @@ git is not preinstalled on Amazon Linux 2023, so install it first:
 ```bash
 sudo dnf install -y git
 git --version
-git clone <your-remote> ~/CTV_dbt_iceberg_poc
+git clone https://github.com/venkataraman-mr/ctv-dbt-iceberg-poc.git ~/CTV_dbt_iceberg_poc
 cd ~/CTV_dbt_iceberg_poc
 ls -a && git status
 ```
 ✓ expect: a git version prints, then the project files (`docker-compose.yml`, `infra/`, `dbt/`,
-`ingestion/`, `.env`, …).
+`ingestion/`, …). Note: **`.env` is NOT in git** (it holds secrets) — you create it in Stage 4.
 
 ## Stage 1 — 💾 Baseline disk check
 ```bash
@@ -51,15 +51,19 @@ docker compose version
 ```
 ✓ expect: a Compose v2 version prints.
 
-## Stage 4 — Fill `.env` + create the Nessie data dir
+## Stage 4 — Create `.env` + the Nessie data dir
+`.env` is **not** in the repo (it holds secrets — GitHub blocks committed keys), so put it on the
+VM manually: copy your local `.env` across (`scp`, or paste into `nano .env`). Then verify + make
+the data dir:
 ```bash
+test -f .env && echo ".env present" || echo "!! create .env first (copy from your local copy)"
 # confirm the required secrets are filled (only PG_* placeholders may remain for now):
 grep -E 'REPLACE_(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AZURE_STORAGE_ACCOUNT_KEY)' .env \
   && echo "!! fill these in .env first" || echo "AWS/Azure secrets set"
 # create the Nessie RocksDB dir (on the EBS-backed disk):
 mkdir -p "$(grep -E '^NESSIE_DATA_DIR=' .env | cut -d= -f2-)"
 ```
-✓ expect: "AWS/Azure secrets set" and the dir created.
+✓ expect: ".env present", "AWS/Azure secrets set", and the dir created.
 
 ## Stage 5 — 💾 Pre-build disk check
 ```bash

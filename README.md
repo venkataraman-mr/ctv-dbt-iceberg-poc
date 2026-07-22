@@ -17,8 +17,9 @@ docs/                  runbook + architecture pointer
 ## Prerequisites
 - **Docker + Docker Compose v2** on the VM — the only required host install (everything else is
   containerized). Install steps: see `docs/runbook.md` §0.
-- AWS credentials for the S3 bucket — fill the `REPLACE_*` values in `.env` (tracked in git).
-  Currently the `mukesh-s3-only-temp` IAM user's keys; swap to the instance-profile role when provisioned.
+- AWS credentials for the S3 bucket — create `.env` (it's **gitignored**; not committed) and fill
+  the `REPLACE_*` values. Currently the `mukesh-s3-only-temp` IAM user's keys; swap to the
+  instance-profile role when provisioned. Copy `.env` to each machine manually (see runbook).
 - (reference sync) Azure storage **account key**.
 - (creative flow, later) prod Postgres reachability — currently BLOCKED (DevOps).
 

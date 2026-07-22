@@ -29,7 +29,7 @@ Verify: `docker --version` · `docker compose version` · `docker run hello-worl
 
 ## 1. Stand up
 ```bash
-# .env is committed to the repo — fill REPLACE_* values (AWS keys, Azure key); set NESSIE_DATA_DIR
+# .env is gitignored — create it on this machine (copy your local .env), fill REPLACE_* values; set NESSIE_DATA_DIR
 docker compose build
 docker compose up -d
 docker compose ps
@@ -71,6 +71,6 @@ the data/metadata files land under `s3://dataplatformpoc-venketa/warehouse/`.
 ## Credentials
 - AWS: default provider chain reads `AWS_*` from `.env` (currently the `mukesh-s3-only-temp`
   IAM user keys). Swap to the instance-profile role when provisioned, then drop the keys.
-- `.env` is **tracked in git** (project decision) and holds secrets — so treat the repo as
-  sensitive: keep it private, and rotate the AWS/Azure/Postgres credentials if it's ever
-  exposed. (Safer future options: git-crypt/SOPS encryption, or a secrets manager.)
+- `.env` is **gitignored** — it is NOT committed (GitHub push protection blocks committed keys).
+  Copy it to each machine manually (`scp`, or paste). If you want one versioned copy across
+  machines, encrypt it (git-crypt / SOPS) or use a secrets manager — don't commit plaintext keys.
