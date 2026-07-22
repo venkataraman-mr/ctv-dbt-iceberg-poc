@@ -1,0 +1,3 @@
+# Repo target is a Linux VM + Docker — force LF line endings on checkout everywhere,
+# so shell scripts / configs authored on Windows don't arrive with CRLF (\r) and break bash.
+* text=auto eol=lf
