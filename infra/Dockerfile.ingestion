@@ -1,0 +1,5 @@
+FROM python:3.11-slim
+WORKDIR /app
+COPY ingestion/requirements.txt /app/ingestion/requirements.txt
+RUN pip install --no-cache-dir -r /app/ingestion/requirements.txt
+# Code is bind-mounted at /app/ingestion; run as: python -m ingestion.reference_sync

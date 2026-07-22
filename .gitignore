@@ -1,0 +1,19 @@
+# secrets / local env — NOT committed (GitHub push protection blocks committed keys)
+.env
+*.key
+*.pem
+.aws/
+# nessie local state (point NESSIE_DATA_DIR at the EBS mount on the VM)
+nessie-data/
+# python
+**/__pycache__/
+*.pyc
+.venv/
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+# misc
+.ivy2/
+.DS_Store
+*.log

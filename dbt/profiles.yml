@@ -1,0 +1,13 @@
+ctv_occurrence:
+  target: dev
+  outputs:
+    dev:
+      type: trino
+      method: none          # no-auth Trino on the private VM
+      user: dbt
+      host: trino           # compose service name
+      port: 8080
+      database: iceberg     # the Trino catalog (Nessie-backed)
+      schema: silver        # default; gold models override via +schema
+      threads: 4
+      http_scheme: http

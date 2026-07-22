@@ -1,0 +1,18 @@
+version: 2
+sources:
+  # bronze occurrence tables — owned by ingestion (PyIceberg / dbt staging->raw), read-only here
+  - name: bronze
+    database: iceberg
+    schema: bronze
+    tables:
+      - name: digital_raw_occurrence          # canonical CTV/Digital occurrence table (append-only)
+        description: "Canonical raw occurrence (Iceberg, append-only). TODO: declare columns from DDL."
+      - name: ctv_raw_occurrence_staging       # CTV bz2/json staging landing
+        description: "CTV staging landing (VARIANT->string json_data). TODO: declare columns."
+
+  # watermark control table (version + timestamp watermarks live here)
+  - name: control
+    database: iceberg
+    schema: silver
+    tables:
+      - name: watermark_control

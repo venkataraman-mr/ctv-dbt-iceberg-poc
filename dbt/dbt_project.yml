@@ -1,0 +1,23 @@
+name: 'ctv_occurrence'
+version: '1.0.0'
+profile: 'ctv_occurrence'
+config-version: 2
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  ctv_occurrence:
+    +materialized: view
+    bronze:
+      +tags: ['bronze']          # bronze = sources only (Spark/PyIceberg owns the tables)
+    reference:
+      +tags: ['reference']       # synced reference tables (Option C), declared as sources
+    silver:
+      +materialized: incremental
+      +tags: ['silver']
+    gold:
+      +materialized: table
+      +tags: ['gold']

@@ -1,0 +1,5 @@
+# pin what you validate on the VM
+pyiceberg[pyarrow,s3fs,adlfs]==0.11.1
+deltalake==0.25.0
+duckdb==1.1.3
+boto3

@@ -1,0 +1,66 @@
+# CTV dbt+Iceberg PoC — single-VM stack. Reads variables from .env (same directory).
+# AWS creds flow via the default provider chain (AWS_* env), so no keys live in config files.
+services:
+  nessie:
+    image: ghcr.io/projectnessie/nessie:${NESSIE_VERSION}
+    container_name: nessie
+    ports: ["19120:19120"]
+    environment:
+      # embedded RocksDB version store (no separate DB); path is on the EBS-backed volume
+      nessie.version.store.type: ROCKSDB
+      nessie.version.store.persist.rocks.database-path: /nessie/data
+      # Iceberg REST catalog warehouse on S3 (used by PyIceberg via /iceberg/)
+      # VALIDATE these property names against the pinned Nessie version at stand-up.
+      nessie.catalog.default-warehouse: warehouse
+      nessie.catalog.warehouses.warehouse.location: ${WAREHOUSE}
+      nessie.catalog.service.s3.default-options.region: ${AWS_REGION}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+    volumes:
+      - ${NESSIE_DATA_DIR}:/nessie/data
+    restart: unless-stopped
+
+  trino:
+    image: trinodb/trino:${TRINO_VERSION}
+    container_name: trino
+    ports: ["8080:8080"]
+    volumes:
+      - ./infra/trino/catalog:/etc/trino/catalog:ro
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+    depends_on: [nessie]
+    restart: unless-stopped
+
+  dbt:
+    build: { context: ., dockerfile: infra/Dockerfile.dbt }
+    container_name: dbt
+    environment:
+      DBT_PROFILES_DIR: /dbt
+    volumes:
+      - ./dbt:/dbt
+    working_dir: /dbt
+    depends_on: [trino]
+    command: tail -f /dev/null
+    restart: unless-stopped
+
+  ingestion:
+    build: { context: ., dockerfile: infra/Dockerfile.ingestion }
+    container_name: ingestion
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+      S3_BUCKET: ${S3_BUCKET}
+      WAREHOUSE: ${WAREHOUSE}
+      NESSIE_ICEBERG_URI: ${NESSIE_ICEBERG_URI}
+      AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME}
+      AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY}
+    volumes:
+      - ./ingestion:/app/ingestion
+    working_dir: /app
+    depends_on: [nessie]
+    command: tail -f /dev/null
+    restart: unless-stopped

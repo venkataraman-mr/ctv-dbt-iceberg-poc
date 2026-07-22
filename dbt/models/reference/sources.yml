@@ -1,0 +1,14 @@
+version: 2
+sources:
+  # reference/lookup tables synced from Azure -> Iceberg on S3 (Option C). Read-only.
+  # Future: repoint to UC managed Iceberg (direct read) once the Databricks upgrade lands.
+  - name: reference
+    database: iceberg
+    schema: reference
+    tables:
+      - name: data_provider
+      - name: source_channel
+      - name: media_property_flatten
+      - name: media_property_data_provider_map
+      - name: provider_global_market_map
+      # TODO: add the remaining reference tables the CTV flow joins.
