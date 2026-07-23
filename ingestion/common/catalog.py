@@ -14,10 +14,11 @@ def get_catalog():
         **{
             "type": "rest",
             "uri": config.NESSIE_ICEBERG_URI,
-            # Force PyArrow FileIO for S3. Without this PyIceberg falls back to the fsspec
-            # FileIO, which imports s3fs (ModuleNotFoundError) — we dropped s3fs because it
-            # pins fsspec exactly and broke the build. PyArrow reads AWS creds from the
-            # default provider chain (AWS_* env) + s3.region below.
+            # NOTE: PyIceberg 0.11.1's REST catalog does NOT honor py-io-impl for the per-table
+            # IO — it infers FsspecFileIO for s3:// regardless. So s3fs is installed (via the
+            # pyiceberg[...,s3fs] extra) to serve that path. We still set py-io-impl to express
+            # intent (and in case a future version respects it). fsspec/s3fs read AWS creds from
+            # the default provider chain (AWS_* env) + s3.region below.
             "py-io-impl": "pyiceberg.io.pyarrow.PyArrowFileIO",
             # Nessie's Iceberg REST expects the warehouse NAME registered on the server
             # (nessie.catalog.default-warehouse: warehouse), NOT the s3:// location. Passing
