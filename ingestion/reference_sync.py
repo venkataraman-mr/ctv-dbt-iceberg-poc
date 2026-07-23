@@ -16,6 +16,7 @@ import io
 
 import duckdb
 import pyarrow as pa
+import pyarrow.dataset as pads
 from deltalake import DeltaTable
 from deltalake.exceptions import DeltaProtocolError
 from pyiceberg.io.pyarrow import _ConvertToIcebergWithoutIDs, visit_pyarrow
@@ -56,25 +57,29 @@ def _remap_ts(schema: pa.Schema, unit: str) -> pa.Schema:
 
 
 def _delta_to_arrow(delta_path: str) -> pa.Table:
-    """Read a Delta table via delta-rs. Some Spark/INT96 tables store timestamps at nanosecond
-    precision with sub-microsecond (or sentinel) values, so delta-rs's *safe* ns->us cast raises
-    ArrowInvalid ('would lose data'). Recovery: re-read at the physical ns precision, then
-    truncate to us (Iceberg precision) with an unsafe cast."""
+    """Read a Delta table via delta-rs (authenticates via rustls — no system CA needed).
+
+    Spark writes legacy timestamps as parquet INT96, which pyarrow decodes as ns by default;
+    delta-rs then does a *safe* ns->us cast to the Delta schema and raises ArrowInvalid when a
+    value carries sub-microsecond digits (or a sentinel like -4852116232933722624). Fix: decode
+    INT96 directly at us precision so no ns->us cast is needed. If any logical-ns timestamps still
+    remain, truncate them to us with an unsafe cast."""
     dt = DeltaTable(delta_path, storage_options=_STORAGE)
-    try:
-        return dt.to_pyarrow_table()
-    except pa.lib.ArrowInvalid:
-        dataset = dt.to_pyarrow_dataset()
-        raw = dataset.replace_schema(_remap_ts(dataset.schema, "ns")).to_table()  # physical ns
-        return raw.cast(_remap_ts(raw.schema, "us"), safe=False)                  # truncate -> us
+    dataset = dt.to_pyarrow_dataset(
+        parquet_read_options=pads.ParquetReadOptions(coerce_int96_timestamp_unit="us"))
+    tbl = dataset.to_table()
+    if any(pa.types.is_timestamp(f.type) and f.type.unit == "ns" for f in tbl.schema):
+        tbl = tbl.cast(_remap_ts(tbl.schema, "us"), safe=False)
+    return tbl
 
 
 def read_arrow(delta_path: str) -> pa.Table:
     try:
         return _delta_to_arrow(delta_path)
-    except Exception:
-        # Last resort for tables delta-rs genuinely can't read (deletionVectors / v2Checkpoint).
-        # Needs the DuckDB azure extension + system CA certs.
+    except Exception as e:
+        # Surface the real delta-rs error before the last-resort DuckDB path (deletionVectors /
+        # v2Checkpoint tables), so a masked failure never looks like the DuckDB CA error again.
+        print(f"[read_arrow] delta-rs read failed: {type(e).__name__}: {e}\n  -> trying DuckDB…")
         return _read_via_duckdb(delta_path)
 
 
