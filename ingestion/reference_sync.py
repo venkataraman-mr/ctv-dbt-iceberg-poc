@@ -36,15 +36,16 @@ _STORAGE = {"account_name": config.AZURE_ACCOUNT, "account_key": config.AZURE_KE
 
 
 def _read_via_duckdb(delta_path: str) -> pa.Table:
-    """Fallback for Delta tables using reader features delta-rs can't read (v2Checkpoint,
-    deletionVectors). DuckDB's delta extension has more current protocol support."""
+    """Fallback for Delta tables delta-rs can't read — v2Checkpoint / deletionVectors, OR that
+    trip delta-rs's ns->us timestamp cast (DuckDB reads TIMESTAMP at us precision, sidestepping
+    the overflow and yielding Iceberg-friendly timestamp[us]). NOTE: DuckDB's CREATE SECRET does
+    NOT accept bound params (?), so the connection string is inlined; an Azure account key is
+    base64 (no single quotes) so there's nothing to escape."""
     con = duckdb.connect()
     con.execute("INSTALL delta; LOAD delta; INSTALL azure; LOAD azure;")
-    con.execute(
-        "CREATE SECRET (TYPE azure, CONNECTION_STRING ?)",
-        [f"DefaultEndpointsProtocol=https;AccountName={config.AZURE_ACCOUNT};"
-         f"AccountKey={config.AZURE_KEY};EndpointSuffix=core.windows.net"],
-    )
+    conn_str = (f"DefaultEndpointsProtocol=https;AccountName={config.AZURE_ACCOUNT};"
+                f"AccountKey={config.AZURE_KEY};EndpointSuffix=core.windows.net")
+    con.execute(f"CREATE OR REPLACE SECRET az_ref (TYPE azure, CONNECTION_STRING '{conn_str}')")
     return con.sql(f"SELECT * FROM delta_scan('{delta_path}')").arrow()
 
 
