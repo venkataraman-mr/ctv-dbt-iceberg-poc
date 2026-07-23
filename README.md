@@ -45,6 +45,15 @@ Use a second VS Code window connected via **Remote-SSH** to the VM for *running 
 (docker/dbt/logs) — not for editing the same files, to avoid divergence between the two copies.
 
 ## Status
-Foundation + reference-sync + CTV-ingestion **skeletons**. Configs (Nessie S3/warehouse, image
-versions, healthchecks) are starting points to validate at stand-up — see `docs/runbook.md`.
-Creative push/sync-back is gated on prod Postgres access.
+**Foundation VALIDATED (2026-07-22).** The full stack (nessie · trino · dbt · ingestion) builds and
+runs on the EC2 VM, and the two-engine smoke test passes: Trino and PyIceberg both read/write one
+`iceberg.bronze.smoke` table through a single Nessie catalog on S3, and dbt connects to Trino.
+Config that had to be nailed down at stand-up (all now resolved and documented in
+`docs/runbook.md` §4 and `docs/CHECKPOINT_2026-07-22.md`): Nessie RocksDB runs as root; Nessie's
+catalog S3 uses STATIC auth via a secret URN; PyIceberg passes the warehouse *name*; and Nessie
+vends `py-io-impl=FsspecFileIO`, which we override to PyArrow client-side (`force_pyarrow_io`).
+
+Still skeletons / not yet run: reference-sync (`TABLE_MAP` empty) and the real silver/gold CTV
+models. Creative push/sync-back is gated on prod Postgres access (DevOps).
+
+**Resuming in a new window?** Read `docs/CHECKPOINT_2026-07-22.md` first — it's the handoff.
