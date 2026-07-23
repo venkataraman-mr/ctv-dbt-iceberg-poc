@@ -17,6 +17,9 @@ services:
       nessie.catalog.default-warehouse: warehouse
       nessie.catalog.warehouses.warehouse.location: ${WAREHOUSE}
       nessie.catalog.service.s3.default-options.region: ${AWS_REGION}
+      # Use the default AWS credential chain (reads AWS_* env below) instead of STATIC (which
+      # would require an explicitly-configured access-key/secret via a Nessie secret URN).
+      nessie.catalog.service.s3.default-options.auth-mode: APPLICATION_GLOBAL
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_REGION: ${AWS_REGION}
