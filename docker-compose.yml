@@ -4,6 +4,9 @@ services:
   nessie:
     image: ghcr.io/projectnessie/nessie:${NESSIE_VERSION}
     container_name: nessie
+    # Run as root so RocksDB can write to the bind-mounted /nessie/data (the host dir is owned by
+    # ec2-user; Nessie's default container user is non-root and hits "Permission denied" otherwise).
+    user: root
     ports: ["19120:19120"]
     environment:
       # embedded RocksDB version store (no separate DB); path is on the EBS-backed volume
