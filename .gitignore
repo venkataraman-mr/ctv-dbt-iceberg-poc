@@ -19,3 +19,4 @@ dbt/logs/
 *.log
 # local-only checkpoint tracker (maintained by hand; canonical copy lives in Google Drive)
 docs/ctv_dbt_iceberg_poc.md
+dbt/.user.yml
