@@ -11,8 +11,8 @@ Usage:
   python -m ingestion.reference_sync --table data_provider
 """
 import argparse
+import base64
 import sys
-import io
 
 import duckdb
 import pyarrow as pa
@@ -83,9 +83,32 @@ def read_arrow(delta_path: str) -> pa.Table:
         return _read_via_duckdb(delta_path)
 
 
+def _normalize_for_iceberg(tbl: pa.Table) -> pa.Table:
+    """Make reference data render cleanly and consistently in Iceberg:
+      - binary columns -> base64 strings. Trino/Iceberg show binary as raw bytes ('\\u0000...');
+        base64 is readable, lossless, and matches how Databricks displays binary (e.g. 'AAA/pA...').
+      - tz-aware timestamps -> UTC wall-clock WITHOUT a zone (Iceberg 'timestamp'). The int64 round
+        trip keeps the exact UTC instant while dropping the zone, so every engine/client renders the
+        same UTC value as the source Delta's '...Z' — no session-timezone shifting.
+    """
+    cols, fields = [], []
+    for i, f in enumerate(tbl.schema):
+        t = f.type
+        if pa.types.is_binary(t) or pa.types.is_large_binary(t):
+            vals = [None if v is None else base64.b64encode(v).decode("ascii")
+                    for v in tbl.column(i).to_pylist()]
+            cols.append(pa.array(vals, type=pa.string())); fields.append(f.with_type(pa.string()))
+        elif pa.types.is_timestamp(t) and t.tz is not None:
+            naive = tbl.column(i).cast(pa.int64()).cast(pa.timestamp(t.unit))
+            cols.append(naive); fields.append(f.with_type(pa.timestamp(t.unit)))
+        else:
+            cols.append(tbl.column(i)); fields.append(f)
+    return pa.Table.from_arrays(cols, schema=pa.schema(fields))
+
+
 def sync_one(catalog, entry: dict) -> int:
     schema_name, table_name = entry["target_schema"], entry["target_table"]
-    arrow = read_arrow(entry["delta_path"])
+    arrow = _normalize_for_iceberg(read_arrow(entry["delta_path"]))
     catalog.create_namespace_if_not_exists(schema_name)
     ice_schema = assign_fresh_schema_ids(visit_pyarrow(arrow.schema, _ConvertToIcebergWithoutIDs()))
     tbl = force_pyarrow_io(catalog.create_table_if_not_exists(f"{schema_name}.{table_name}", schema=ice_schema))
