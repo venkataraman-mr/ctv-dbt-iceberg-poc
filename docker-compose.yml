@@ -17,9 +17,12 @@ services:
       nessie.catalog.default-warehouse: warehouse
       nessie.catalog.warehouses.warehouse.location: ${WAREHOUSE}
       nessie.catalog.service.s3.default-options.region: ${AWS_REGION}
-      # Use the default AWS credential chain (reads AWS_* env below) instead of STATIC (which
-      # would require an explicitly-configured access-key/secret via a Nessie secret URN).
-      nessie.catalog.service.s3.default-options.auth-mode: APPLICATION_GLOBAL
+      # Nessie's Iceberg REST catalog accesses S3 itself (STATIC auth, the default). It does NOT
+      # read the AWS_* env vars — creds must be handed to it via a Nessie "secret" URN. The
+      # secret's .name/.secret are pulled from the AWS_* values in .env at compose-parse time.
+      nessie.catalog.service.s3.default-options.access-key: urn:nessie-secret:quarkus:nessie.catalog.secrets.access-key
+      nessie.catalog.secrets.access-key.name: ${AWS_ACCESS_KEY_ID}
+      nessie.catalog.secrets.access-key.secret: ${AWS_SECRET_ACCESS_KEY}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_REGION: ${AWS_REGION}
