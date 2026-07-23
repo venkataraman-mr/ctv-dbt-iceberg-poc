@@ -13,7 +13,7 @@ services:
       nessie.version.store.type: ROCKSDB
       nessie.version.store.persist.rocks.database-path: /nessie/data
       # Iceberg REST catalog warehouse on S3 (used by PyIceberg via /iceberg/).
-      # Validated against Nessie 0.104.1 (2026-07-22). See the ctv_dbt_iceberg_poc_checkpoint tracker.
+      # Validated against Nessie 0.104.1 (2026-07-22). See docs/runbook.md §4.
       nessie.catalog.default-warehouse: warehouse
       nessie.catalog.warehouses.warehouse.location: ${WAREHOUSE}
       nessie.catalog.service.s3.default-options.region: ${AWS_REGION}
