@@ -49,10 +49,32 @@ def _read_via_duckdb(delta_path: str) -> pa.Table:
     return con.sql(f"SELECT * FROM delta_scan('{delta_path}')").arrow()
 
 
+def _remap_ts(schema: pa.Schema, unit: str) -> pa.Schema:
+    """Copy a schema, changing every timestamp field to the given unit (keeps tz)."""
+    return pa.schema([f.with_type(pa.timestamp(unit, tz=f.type.tz))
+                      if pa.types.is_timestamp(f.type) else f for f in schema])
+
+
+def _delta_to_arrow(delta_path: str) -> pa.Table:
+    """Read a Delta table via delta-rs. Some Spark/INT96 tables store timestamps at nanosecond
+    precision with sub-microsecond (or sentinel) values, so delta-rs's *safe* ns->us cast raises
+    ArrowInvalid ('would lose data'). Recovery: re-read at the physical ns precision, then
+    truncate to us (Iceberg precision) with an unsafe cast."""
+    dt = DeltaTable(delta_path, storage_options=_STORAGE)
+    try:
+        return dt.to_pyarrow_table()
+    except pa.lib.ArrowInvalid:
+        dataset = dt.to_pyarrow_dataset()
+        raw = dataset.replace_schema(_remap_ts(dataset.schema, "ns")).to_table()  # physical ns
+        return raw.cast(_remap_ts(raw.schema, "us"), safe=False)                  # truncate -> us
+
+
 def read_arrow(delta_path: str) -> pa.Table:
     try:
-        return DeltaTable(delta_path, storage_options=_STORAGE).to_pyarrow_table()
-    except (DeltaProtocolError, Exception):
+        return _delta_to_arrow(delta_path)
+    except Exception:
+        # Last resort for tables delta-rs genuinely can't read (deletionVectors / v2Checkpoint).
+        # Needs the DuckDB azure extension + system CA certs.
         return _read_via_duckdb(delta_path)
 
 

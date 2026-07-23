@@ -60,8 +60,9 @@ the data/metadata files land under `s3://dataplatformpoc-venketa/warehouse/`.
 - **VARIANT -> string** parsing for CTV query patterns.
 
 ## 5. Blocked / later
-- **Prod Postgres** (creative push/sync-back) — reachability BLOCKED (DevOps). When it opens,
-  add a Trino Postgres catalog: create `infra/trino/catalog/postgres.properties` with the
+- **Prod Postgres** (creative push/sync-back) — reachability was BLOCKED (DevOps). When it opens,
+  first verify with `bash scripts/pg_connectivity_test.sh` (DNS → TCP host+container → optional
+  auth). Then add a Trino Postgres catalog: create `infra/trino/catalog/postgres.properties` with the
   template below, then restart Trino. (Kept out of `catalog/` until now so Trino doesn't try
   to load an unreachable catalog at startup.)
   ```
