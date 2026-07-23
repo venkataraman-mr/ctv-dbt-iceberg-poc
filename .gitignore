@@ -17,3 +17,5 @@ dbt/logs/
 .ivy2/
 .DS_Store
 *.log
+# local-only checkpoint tracker (maintained by hand; canonical copy lives in Google Drive)
+docs/ctv_dbt_iceberg_poc.md
