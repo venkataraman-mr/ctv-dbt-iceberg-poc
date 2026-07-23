@@ -14,7 +14,11 @@ def get_catalog():
         **{
             "type": "rest",
             "uri": config.NESSIE_ICEBERG_URI,
-            "warehouse": config.WAREHOUSE,
+            # Nessie's Iceberg REST expects the warehouse NAME registered on the server
+            # (nessie.catalog.default-warehouse: warehouse), NOT the s3:// location. Passing
+            # the URI makes Nessie treat it as an ad-hoc warehouse that skips the configured
+            # S3 auth-mode -> "Missing access key and secret for STATIC authentication mode".
+            "warehouse": config.NESSIE_WAREHOUSE,
             "s3.region": config.AWS_REGION,
         },
     )
