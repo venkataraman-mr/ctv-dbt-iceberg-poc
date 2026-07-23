@@ -1,11 +1,17 @@
-"""Load the shared Nessie Iceberg catalog for PyIceberg.
+"""Load the shared Nessie Iceberg catalog for PyIceberg, and load tables with a PyArrow FileIO.
 
-Uses the default PyArrow FileIO for S3: it reads AWS credentials from the default provider
-chain (AWS_* env) plus s3.region. PyIceberg here only writes/reads S3 — Azure reads are done
-by delta-rs / DuckDB in the reference sync, so no s3fs/adlfs is needed.
+Why the wrapper: Nessie's Iceberg REST server vends `py-io-impl=pyiceberg.io.fsspec.FsspecFileIO`
+in each table's config. PyIceberg merges that server config AFTER our catalog properties, so
+Nessie's choice wins and the table ends up with FsspecFileIO — which imports s3fs. We don't ship
+s3fs (it drags aiobotocore + an exact fsspec pin and wrecks dependency resolution). PyArrow works
+for S3 with no extra deps, so `load_table()` rebuilds the table's FileIO forcing PyArrow. PyArrow
+reads AWS creds from the default provider chain (AWS_* env) + s3.region.
 """
 from pyiceberg.catalog import load_catalog
+from pyiceberg.io import load_file_io
 from ingestion import config
+
+_ARROW_IO = "pyiceberg.io.pyarrow.PyArrowFileIO"
 
 
 def get_catalog():
@@ -14,17 +20,25 @@ def get_catalog():
         **{
             "type": "rest",
             "uri": config.NESSIE_ICEBERG_URI,
-            # NOTE: PyIceberg 0.11.1's REST catalog does NOT honor py-io-impl for the per-table
-            # IO — it infers FsspecFileIO for s3:// regardless. So s3fs is installed (via the
-            # pyiceberg[...,s3fs] extra) to serve that path. We still set py-io-impl to express
-            # intent (and in case a future version respects it). fsspec/s3fs read AWS creds from
-            # the default provider chain (AWS_* env) + s3.region below.
-            "py-io-impl": "pyiceberg.io.pyarrow.PyArrowFileIO",
-            # Nessie's Iceberg REST expects the warehouse NAME registered on the server
-            # (nessie.catalog.default-warehouse: warehouse), NOT the s3:// location. Passing
-            # the URI makes Nessie treat it as an ad-hoc warehouse that skips the configured
-            # S3 auth-mode -> "Missing access key and secret for STATIC authentication mode".
+            # We set this too, but Nessie's per-table config overrides it (see load_table).
+            "py-io-impl": _ARROW_IO,
+            # Nessie's Iceberg REST expects the warehouse NAME (nessie.catalog.default-warehouse),
+            # NOT the s3:// location.
             "warehouse": config.NESSIE_WAREHOUSE,
             "s3.region": config.AWS_REGION,
         },
     )
+
+
+def force_pyarrow_io(tbl):
+    """Rebuild a table's FileIO as PyArrow, overriding Nessie's vended FsspecFileIO. Apply this
+    to any table returned by the catalog (load_table / create_table_*) before reading/writing."""
+    props = dict(tbl.io.properties)
+    props["py-io-impl"] = _ARROW_IO
+    tbl.io = load_file_io(props, tbl.metadata_location)
+    return tbl
+
+
+def load_table(identifier):
+    """Load a table via the shared catalog, with the FileIO forced to PyArrow."""
+    return force_pyarrow_io(get_catalog().load_table(identifier))

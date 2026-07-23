@@ -1,5 +1,9 @@
 # pin what you validate on the VM
-pyiceberg[pyarrow,s3fs]==0.11.1
+pyiceberg[pyarrow]==0.11.1
+# Pin pyarrow: pyiceberg 0.11.1 only caps pyarrow at ">=17.0.0" (no upper bound), but its
+# io.pyarrow module fails to import on pyarrow 25 (which deltalake 0.25.5 pulls by default).
+# When that import fails, PyIceberg silently falls back to the fsspec FileIO -> needs s3fs.
+# 20.0.0 satisfies deltalake (>=16,!=19) AND is a version pyiceberg 0.11.1 was tested against.
+pyarrow==20.0.0
 deltalake==0.25.5
 duckdb==1.1.3
-boto3

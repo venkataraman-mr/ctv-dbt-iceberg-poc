@@ -49,6 +49,11 @@ the data/metadata files land under `s3://dataplatformpoc-venketa/warehouse/`.
 
 ## 4. Validate-at-stand-up items (configs here are starting points)
 - **Nessie S3 / warehouse property names** for the pinned `NESSIE_VERSION` (Iceberg REST catalog).
+  RESOLVED for 0.104.1: Nessie's catalog S3 uses STATIC auth via a secret URN
+  (`nessie.catalog.service.s3.default-options.access-key` -> `nessie.catalog.secrets.access-key.{name,secret}`),
+  and PyIceberg must pass the warehouse NAME (`warehouse`), not the s3:// URI. Also, Nessie vends
+  `py-io-impl=FsspecFileIO` per table; we override it to PyArrow client-side in
+  `ingestion/common/catalog.py::force_pyarrow_io` (avoids the s3fs dependency stack).
 - **`table_changes` on delete-file snapshots** — confirm it errors (locks the Half B timestamp-watermark decision).
 - **Trino Azure filesystem** props (`fs.native-azure.enabled`) if any table's data stays on ADLS.
 - **Healthchecks / image versions** — pin and adjust.

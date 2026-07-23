@@ -23,8 +23,9 @@ SQL
 echo "== 3. PyIceberg: append to the SAME table via Nessie =="
 docker exec -i ingestion python - <<'PY'
 import pyarrow as pa
-from ingestion.common.catalog import get_catalog
-t = get_catalog().load_table(("bronze", "smoke"))
+from ingestion.common.catalog import load_table
+t = load_table(("bronze", "smoke"))
+print("table io:", type(t.io).__name__)   # expect PyArrowFileIO
 t.append(pa.table({"id": [2], "note": ["written-by-pyiceberg"]}))
 print("pyiceberg rows now:", t.scan().to_arrow().num_rows)
 PY

@@ -22,7 +22,7 @@ from pyiceberg.io.pyarrow import _ConvertToIcebergWithoutIDs, visit_pyarrow
 from pyiceberg.schema import assign_fresh_schema_ids
 
 from ingestion import config
-from ingestion.common.catalog import get_catalog
+from ingestion.common.catalog import get_catalog, force_pyarrow_io
 
 # One entry per reference table. delta_path = the table's own abfss:// directory.
 TABLE_MAP = [
@@ -59,11 +59,11 @@ def sync_one(catalog, entry: dict) -> int:
     arrow = read_arrow(entry["delta_path"])
     catalog.create_namespace_if_not_exists(schema_name)
     ice_schema = assign_fresh_schema_ids(visit_pyarrow(arrow.schema, _ConvertToIcebergWithoutIDs()))
-    tbl = catalog.create_table_if_not_exists(f"{schema_name}.{table_name}", schema=ice_schema)
+    tbl = force_pyarrow_io(catalog.create_table_if_not_exists(f"{schema_name}.{table_name}", schema=ice_schema))
     if tbl.schema().as_arrow() != arrow.schema:
         with tbl.update_schema() as u:
             u.union_by_name(arrow.schema)
-        tbl = catalog.load_table(f"{schema_name}.{table_name}")
+        tbl = force_pyarrow_io(catalog.load_table(f"{schema_name}.{table_name}"))
     tbl.overwrite(arrow)
     print(f"  {schema_name}.{table_name}: replaced with {arrow.num_rows:,} rows")
     return arrow.num_rows
