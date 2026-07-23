@@ -26,9 +26,10 @@ from ingestion.common.catalog import get_catalog, force_pyarrow_io
 
 # One entry per reference table. delta_path = the table's own abfss:// directory.
 TABLE_MAP = [
-    # {"delta_path": "abfss://<container>@<acct>.dfs.core.windows.net/.../data_provider",
-    #  "target_schema": "reference", "target_table": "data_provider"},
-    # TODO: fill in from the reference-table inventory (all external Delta with abfss paths).
+    # hive_metastore.km_preparation_db.data_provider (container 'databricks', ADLS Gen2 dfs endpoint)
+    {"delta_path": "abfss://databricks@stdlg2commondbrickspeu2.dfs.core.windows.net/delta/km_preparation_db/data_provider",
+     "target_schema": "reference", "target_table": "data_provider"},
+    # TODO: add the remaining reference tables once this one validates end-to-end.
 ]
 
 _STORAGE = {"account_name": config.AZURE_ACCOUNT, "account_key": config.AZURE_KEY}
