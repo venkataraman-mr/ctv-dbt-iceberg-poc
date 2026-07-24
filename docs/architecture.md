@@ -1,6 +1,6 @@
 # Architecture
 
-Source of truth: **Google Drive → `CTV_occurrence_flow_architecture_MASTER_v2`**.
+Source of truth: **Google Drive → `CTV_occurrence_flow_architecture_MASTER`**.
 
 One-paragraph summary: open-source lakehouse on one EC2 VM — PyIceberg ingestion (no Spark),
 Trino + dbt transforms, Apache Iceberg on S3, Nessie catalog (RocksDB on EBS, auth off).
