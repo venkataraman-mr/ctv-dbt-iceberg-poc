@@ -6,4 +6,6 @@ pyiceberg[pyarrow]==0.11.1
 # 20.0.0 satisfies deltalake (>=16,!=19) AND is a version pyiceberg 0.11.1 was tested against.
 pyarrow==20.0.0
 deltalake==0.25.5
-duckdb==1.1.3
+# 1.5.x (current stable) — future-proofs the runtime delta/azure extension downloads (the repo
+# eventually drops very old versions). 1.1.3 also worked; bumped only for longevity.
+duckdb==1.5.5

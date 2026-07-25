@@ -42,8 +42,9 @@ from pyiceberg.schema import assign_fresh_schema_ids
 from ingestion import config
 from ingestion.common.catalog import get_catalog, force_pyarrow_io
 
-# Rows per streamed batch. Lower it if a very wide table still pressures memory.
-BATCH_ROWS = int(os.environ.get("REF_SYNC_BATCH_ROWS", "200000"))
+# Rows per streamed batch. 1M keeps commits few (faster on multi-million-row tables) while staying
+# well within RAM; lower it via REF_SYNC_BATCH_ROWS if a very wide table pressures memory.
+BATCH_ROWS = int(os.environ.get("REF_SYNC_BATCH_ROWS", "1000000"))
 
 _BASE = "abfss://databricks@stdlg2commondbrickspeu2.dfs.core.windows.net/delta"
 
