@@ -104,10 +104,20 @@ def _normalize_table(tbl: pa.Table) -> pa.Table:
 
 # --------------------------------------------------- streaming readers --------
 def _duckdb_reader(delta_path: str):
-    """Streaming RecordBatchReader over a Delta table via DuckDB (fallback). CREATE SECRET can't
-    take a bound param, so the connection string is inlined (an Azure account key has no quotes)."""
+    """Streaming RecordBatchReader over a Delta table via DuckDB (fallback for deletionVectors /
+    v2Checkpoint, which delta-rs can't read). CREATE SECRET can't take a bound param, so the
+    connection string is inlined (an Azure account key has no quotes)."""
     con = duckdb.connect()
     con.execute("INSTALL delta; LOAD delta; INSTALL azure; LOAD azure;")
+    # DuckDB's DEFAULT Azure transport is the Azure C++ SDK, which sets its own CA path and ignores
+    # SSL_CERT_FILE/CURL_CA_BUNDLE — hence the 'SSL CA cert' failure to blob storage. Switch to
+    # DuckDB's own libcurl transport, which honors ca_cert_file / the system CA bundle.
+    for stmt in ("SET azure_transport_option_type='curl'",
+                 "SET ca_cert_file='/etc/ssl/certs/ca-certificates.crt'"):
+        try:
+            con.execute(stmt)
+        except Exception as e:
+            print(f"  (duckdb setting skipped: {stmt} -> {type(e).__name__}: {e})")
     conn_str = (f"DefaultEndpointsProtocol=https;AccountName={config.AZURE_ACCOUNT};"
                 f"AccountKey={config.AZURE_KEY};EndpointSuffix=core.windows.net")
     con.execute(f"CREATE OR REPLACE SECRET az_ref (TYPE azure, CONNECTION_STRING '{conn_str}')")
