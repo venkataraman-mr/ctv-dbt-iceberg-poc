@@ -6,9 +6,17 @@ sources:
     database: iceberg
     schema: reference
     tables:
+      - name: adscore_provided_adservers
       - name: data_provider
-      - name: source_channel
-      - name: media_property_flatten
       - name: media_property_data_provider_map
-      - name: provider_global_market_map
-      # TODO: add the remaining reference tables the CTV flow joins.
+      - name: origin
+      - name: source_channel
+      - name: standard_ad_size
+      - name: standard_mime_type
+      - name: vx0_vx2_component_mapping
+      - name: media_property_flatten
+      - name: company
+      - name: product_flatten
+      - name: productmap
+      - name: vx0_vx2_advertiser_mapping
+      - name: vx0_vx2_mattress_product_mapping
