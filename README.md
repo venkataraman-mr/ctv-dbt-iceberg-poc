@@ -45,15 +45,23 @@ Use a second VS Code window connected via **Remote-SSH** to the VM for *running 
 (docker/dbt/logs) — not for editing the same files, to avoid divergence between the two copies.
 
 ## Status
-**Foundation VALIDATED (2026-07-22).** The full stack (nessie · trino · dbt · ingestion) builds and
-runs on the EC2 VM, and the two-engine smoke test passes: Trino and PyIceberg both read/write one
-`iceberg.bronze.smoke` table through a single Nessie catalog on S3, and dbt connects to Trino.
-Config that had to be nailed down at stand-up (all now resolved and documented in
-`docs/runbook.md` §4): Nessie RocksDB runs as root; Nessie's
-catalog S3 uses STATIC auth via a secret URN; PyIceberg passes the warehouse *name*; and Nessie
-vends `py-io-impl=FsspecFileIO`, which we override to PyArrow client-side (`force_pyarrow_io`).
+**Phase 1 (Foundation) + Phase 2 (Reference sync) VALIDATED.**
 
-Still skeletons / not yet run: reference-sync (`TABLE_MAP` empty) and the real silver/gold CTV
-models. Creative push/sync-back is gated on prod Postgres access (DevOps).
+*Foundation (2026-07-22):* the full stack (nessie · trino · dbt · ingestion) builds and runs on the
+EC2 VM, and the two-engine smoke test passes — Trino and PyIceberg both read/write one Iceberg table
+through a single Nessie catalog on S3, and dbt connects to Trino. Config nailed down at stand-up (in
+`docs/runbook.md` §4): Nessie RocksDB runs as root; its catalog S3 uses STATIC auth via a secret URN;
+PyIceberg passes the warehouse *name*; and Nessie vends `py-io-impl=FsspecFileIO`, overridden to
+PyArrow client-side (`force_pyarrow_io`).
+
+*Reference sync — Option C (2026-07-25):* all **14** hive_metastore Delta reference tables mirror to
+`iceberg.reference.*` via a streamed, atomic clean reload (memory-bounded, never drops the table).
+delta-rs is the primary reader; DuckDB is the fallback for deletion-vector / v2Checkpoint tables
+(with the libcurl Azure transport for TLS). Binary→base64 and UTC-timestamp normalization keep the
+output clean. Daily cron is ready. Details in `docs/runbook.md` §3.
+
+Not yet started: CTV bronze ingestion (Piece 1–2) and the silver/gold occurrence models (Piece 5).
+Creative push/sync-back (Pieces 3–4) is gated on prod Postgres access (DevOps). Some library
+upgrades are parked as a future action item (`docs/runbook.md` §6).
 
 **Resuming in a new window?** Start with `docs/runbook.md` and `scripts/vm_setup.md`.
