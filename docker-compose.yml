@@ -67,6 +67,12 @@ services:
       NESSIE_ICEBERG_URI: ${NESSIE_ICEBERG_URI}
       AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME}
       AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY}
+      # Point the TLS stack (OpenSSL + libcurl) at the system CA bundle so DuckDB's Azure client can
+      # verify TLS to blob storage. Needed for Delta tables with deletionVectors / v2Checkpoint,
+      # which delta-rs can't read and only DuckDB can. ca-certificates is installed in the image.
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+      SSL_CERT_DIR: /etc/ssl/certs
+      CURL_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
     volumes:
       - ./ingestion:/app/ingestion
     working_dir: /app
