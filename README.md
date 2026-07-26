@@ -45,7 +45,7 @@ Use a second VS Code window connected via **Remote-SSH** to the VM for *running 
 (docker/dbt/logs) — not for editing the same files, to avoid divergence between the two copies.
 
 ## Status
-**Phase 1 (Foundation) + Phase 2 (Reference sync) VALIDATED.**
+**Phase 1 (Foundation) + Phase 2 (Reference sync) + Postgres connectivity VALIDATED.**
 
 *Foundation (2026-07-22):* the full stack (nessie · trino · dbt · ingestion) builds and runs on the
 EC2 VM, and the two-engine smoke test passes — Trino and PyIceberg both read/write one Iceberg table
@@ -60,8 +60,13 @@ delta-rs is the primary reader; DuckDB is the fallback for deletion-vector / v2C
 (with the libcurl Azure transport for TLS). Binary→base64 and UTC-timestamp normalization keep the
 output clean. Daily cron is ready. Details in `docs/runbook.md` §3.
 
-Not yet started: CTV bronze ingestion (Piece 1–2) and the silver/gold occurrence models (Piece 5).
-Creative push/sync-back (Pieces 3–4) is gated on prod Postgres access (DevOps). Some library
-upgrades are parked as a future action item (`docs/runbook.md` §6).
+*Prod Postgres + Trino catalog (2026-07-26):* the cross-cloud path (previously blocked) is open and
+authenticated (verified via `scripts/pg_connectivity_test.sh` — psql OK as `databricks_admin_user` @
+`vxcentral`, PostgreSQL 16.4). The Trino `postgres` catalog is wired
+(`infra/trino/catalog/postgres.properties`, creds via `${ENV:PG_*}` — no secrets committed), so the
+creative flow (Pieces 3–4) is unblocked. Details in `docs/runbook.md` §5.
+
+Next up: implement the pipeline Pieces 1→5 in order, **starting with CTV bronze ingestion (Piece 1–2)**.
+Some library upgrades are parked as a future action item (`docs/runbook.md` §6).
 
 **Resuming in a new window?** Start with `docs/runbook.md` and `scripts/vm_setup.md`.
