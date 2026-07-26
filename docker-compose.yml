@@ -40,6 +40,13 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_REGION: ${AWS_REGION}
+      # Prod Postgres creds for the postgresql catalog (infra/trino/catalog/postgres.properties
+      # reads these via ${ENV:...}; values come from .env, so no secrets in committed files).
+      PG_HOST: ${PG_HOST}
+      PG_PORT: ${PG_PORT}
+      PG_DB: ${PG_DB}
+      PG_USER: ${PG_USER}
+      PG_PASSWORD: ${PG_PASSWORD}
     depends_on: [nessie]
     restart: unless-stopped
 

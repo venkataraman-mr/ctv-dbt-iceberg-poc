@@ -90,19 +90,22 @@ changes fail loudly, and the run stops at the first failing table.
 - **Healthchecks / image versions** — pin and adjust.
 - **VARIANT -> string** parsing for CTV query patterns.
 
-## 5. Blocked / later
-- **Prod Postgres** (creative push/sync-back) — reachability was BLOCKED (DevOps). When it opens,
-  first verify with `bash scripts/pg_connectivity_test.sh` (DNS → TCP host+container → optional
-  auth). Then add a Trino Postgres catalog: create `infra/trino/catalog/postgres.properties` with the
-  template below, then restart Trino. (Kept out of `catalog/` until now so Trino doesn't try
-  to load an unreachable catalog at startup.)
-  ```
-  connector.name=postgresql
-  connection-url=jdbc:postgresql://azeus2-postgres-mrdpp-p-01.vivvix.net:5432/<db>
-  connection-user=<user>
-  connection-password=<password>
-  allow-drop-table=true
-  ```
+## 5. Prod Postgres — reachability RESOLVED, Trino catalog WIRED (2026-07-26)
+Cross-cloud reachability was BLOCKED; DevOps opened the path (verified: `bash scripts/pg_connectivity_test.sh`
+→ DNS ok, TCP OPEN, psql auth OK as `databricks_admin_user` @ `vxcentral`, PostgreSQL 16.4). The Trino
+`postgresql` catalog is now wired at `infra/trino/catalog/postgres.properties`, reading creds from env
+(`${ENV:PG_*}`) so no secrets sit in a committed file — the `trino` service in `docker-compose.yml`
+passes `PG_HOST/PG_PORT/PG_DB/PG_USER/PG_PASSWORD` from `.env`. Adding/changing a catalog needs a Trino
+recreate: `docker compose up -d` (or `--force-recreate trino`), then verify:
+```bash
+docker exec -i trino trino --execute "SHOW SCHEMAS FROM postgres"
+docker exec -i trino trino --execute "SHOW TABLES FROM postgres.creatives"   # adjust schema
+```
+Writes to Postgres go via psycopg2 cloned stored procs (Piece 3), not Trino. `databricks_admin_user`
+is a broad admin login — scope it down before anything beyond the PoC. If Trino errors on TLS
+(e.g. "no encryption"/SSL), append `?sslmode=require` to the `connection-url`.
+
+## 5b. Later
 - **Airflow** — cron first; Airflow later.
 
 ## 6. Deferred library upgrades (future action item — not done, stack is validated as-is)
