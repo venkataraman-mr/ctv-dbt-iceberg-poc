@@ -52,7 +52,7 @@
       update {{ source('control', 'watermark_control') }}
       set current_commit_version = {{ end_version if end_version is not none else 'null' }},
           transaction_status = 'InProgress',
-          updated_timestamp = cast(current_timestamp as timestamp(6))
+          updated_timestamp = cast(current_timestamp as timestamp(6) with time zone)
       where watermark_name = '{{ watermark_name }}'
     {% endset %}
     {% do run_query(pin_sql) %}
@@ -67,7 +67,7 @@
      "update " ~ source('control', 'watermark_control') ~
      " set last_commit_version = current_commit_version," ~
      " transaction_status = 'SUCCEEDED'," ~
-     " updated_timestamp = cast(current_timestamp as timestamp(6))" ~
+     " updated_timestamp = cast(current_timestamp as timestamp(6) with time zone)" ~
      " where watermark_name = '" ~ watermark_name ~ "'") }}
 {% endmacro %}
 
@@ -92,9 +92,9 @@
   {% if not execute %}{{ return("select 1") }}{% endif %}
   {{ return(
      "update " ~ source('control', 'watermark_control') ~
-     " set start_timestamp = timestamp '" ~ prev_end_ts ~ "'," ~
-     " end_timestamp = timestamp '" ~ new_end_ts ~ "'," ~
+     " set start_timestamp = cast(timestamp '" ~ prev_end_ts ~ "' as timestamp(6) with time zone)," ~
+     " end_timestamp = cast(timestamp '" ~ new_end_ts ~ "' as timestamp(6) with time zone)," ~
      " transaction_status = 'SUCCEEDED'," ~
-     " updated_timestamp = cast(current_timestamp as timestamp(6))" ~
+     " updated_timestamp = cast(current_timestamp as timestamp(6) with time zone)" ~
      " where watermark_name = '" ~ watermark_name ~ "'") }}
 {% endmacro %}

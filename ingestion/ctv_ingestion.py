@@ -44,13 +44,13 @@ BATCH_ROWS = int(os.environ.get("CTV_LANDING_BATCH_ROWS", "50000"))
 _READ_CHUNK = 8 << 20  # 8 MiB reads from S3
 
 # Arrow schema appended to staging; must match ddl/01 (json_data VARIANT->string, record_index,
-# source_filename, blob_name, created_timestamp WITHOUT zone = UTC wall-clock, creative_url_hash).
+# source_filename, blob_name, created_timestamp tz-aware UTC = Iceberg timestamptz, creative_url_hash).
 _ARROW_SCHEMA = pa.schema([
     ("json_data", pa.string()),
     ("record_index", pa.int32()),
     ("source_filename", pa.string()),
     ("blob_name", pa.string()),
-    ("created_timestamp", pa.timestamp("us")),  # tz-naive, UTC wall-clock
+    ("created_timestamp", pa.timestamp("us", tz="UTC")),  # tz-aware UTC (Iceberg timestamptz)
     ("creative_url_hash", pa.int64()),
 ])
 
@@ -179,7 +179,7 @@ def _append_file(fs, table, path: str, day: str) -> int:
     """Stream one file into staging in bounded batches, then archive it. Returns rows written."""
     blob_name = path.split("/", 1)[-1]                              # key without bucket
     source_filename = blob_name[:-4] if blob_name.endswith(".bz2") else blob_name
-    created_ts = datetime.now(timezone.utc).replace(tzinfo=None)    # tz-naive UTC
+    created_ts = datetime.now(timezone.utc)                         # tz-aware UTC (timestamptz)
     print(f"Processing {path} ...")
 
     total, batch = 0, []

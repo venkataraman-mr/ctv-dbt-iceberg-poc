@@ -16,13 +16,13 @@
 -- = NULL) before the first run so the initial full load runs and then advances the watermark.
 CREATE TABLE IF NOT EXISTS iceberg.silver.watermark_control (
     watermark_name          VARCHAR,
-    start_timestamp         TIMESTAMP(6),
-    end_timestamp           TIMESTAMP(6),
+    start_timestamp         TIMESTAMP(6) WITH TIME ZONE,
+    end_timestamp           TIMESTAMP(6) WITH TIME ZONE,
     last_commit_version     BIGINT,
     current_commit_version  BIGINT,
     transaction_status      VARCHAR,
-    created_timestamp       TIMESTAMP(6),
-    updated_timestamp       TIMESTAMP(6)
+    created_timestamp       TIMESTAMP(6) WITH TIME ZONE,
+    updated_timestamp       TIMESTAMP(6) WITH TIME ZONE
 )
 WITH (
     format = 'PARQUET'

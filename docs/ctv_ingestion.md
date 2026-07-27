@@ -37,7 +37,12 @@ the Azure-blob → S3 copy (so `ingestion/` fills when a new blob is dropped) is
 The `.bz2` decompresses to a single JSON object, a JSON array, or JSONL; `extract_json_objects`
 tries those in the same order as the legacy `AzureBZ2JsonProcessor`. Each object becomes a staging
 row with `json_data` (the object's JSON text — VARIANT → string), `record_index`, `source_filename`,
-`blob_name`, and `created_timestamp` (UTC, no zone).
+`blob_name`, and `created_timestamp` (tz-aware UTC — Iceberg `timestamptz`).
+
+All timestamp columns across the flow (staging, raw, `watermark_control`) are `TIMESTAMP(6) WITH
+TIME ZONE` (Iceberg `timestamptz`), storing the UTC instant and reading back as `...+00:00` — this
+matches Databricks `TIMESTAMP` semantics. `capture_date`/`capture_month` are still derived under the
+UTC session-timezone assumption noted below.
 
 ## `creative_url_hash`: precomputed at landing, exact to Spark
 
