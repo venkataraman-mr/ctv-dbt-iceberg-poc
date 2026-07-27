@@ -30,6 +30,7 @@
     incremental_strategy='append',
     schema='bronze',
     tags=['bronze'],
+    views_enabled=false,
     post_hook="{{ watermark_version_finish('" ~ wm_name ~ "') }}",
     properties={
       'partitioning': "ARRAY['capture_month']",
@@ -131,7 +132,7 @@ parsed as (
         json_extract_scalar(j, '$.occurrence.campaign.landingPage')                         as provider_campaign_landing_page,
         cast(null as varchar)                                                               as occurrence_description,
         cast(null as varchar)                                                               as occurrence_link_url,
-        cast(json_extract(j, '$.occurrence.unifiedChain') as varchar)                       as daisy_chain,
+        json_format(json_extract(j, '$.occurrence.unifiedChain'))                           as daisy_chain,
         try(cast(json_extract_scalar(j, '$.occurrence.purchaseMethod') as smallint))        as purchase_method_id,
         cast(null as varchar)                                                               as ad_insertion_point,
         raw_json_text                                                                       as raw_json,
