@@ -45,9 +45,11 @@ typed as (
         creative_url_hash,
         staging_loaded_at,
         json_extract_scalar(j, '$.occurrence.id') as occurrence_id,
-        -- captureDate: accept ISO-8601 (with T/Z or offset) or a plain 'yyyy-MM-dd HH:mm:ss'
+        -- captureDate: observed as '2026-07-01T05:41:39.000+0000'. Try ISO-8601, then the explicit
+        -- millis+offset Joda pattern, then a plain 'yyyy-MM-dd HH:mm:ss'. All land in UTC.
         coalesce(
             try(cast(from_iso8601_timestamp(json_extract_scalar(j, '$.occurrence.captureDate')) as timestamp(6))),
+            try(cast(parse_datetime(json_extract_scalar(j, '$.occurrence.captureDate'), 'yyyy-MM-dd''T''HH:mm:ss.SSSZ') as timestamp(6))),
             try(cast(json_extract_scalar(j, '$.occurrence.captureDate') as timestamp(6)))
         ) as capture_ts,
         try(cast(json_extract_scalar(j, '$.occurrence.creative.videoAttributes.duration') as integer)) as video_duration
