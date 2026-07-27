@@ -65,6 +65,14 @@ Parity was verified against **real PySpark 3.5** for the exact expression above 
 
 The model reproduces `StagingToRawOccurrenceBisCtvUS` in Trino SQL:
 
+- **Incremental read (watermark-driven).** The version watermark `BIS_CTV_US_INGESTION_STG_TO_RAW_OCC`
+  in `silver.watermark_control` tracks the last staging snapshot processed (`last_commit_version`).
+  Each run reads only new inserts via Trino's `system.table_changes(start, end)` where
+  `_change_type = 'insert'` — the direct analog of the legacy Delta `table_changes(...)`. No full
+  scan. The first run (watermark NULL) is the one exception: `table_changes` needs a start snapshot,
+  so it does a one-time full read of the current snapshot, then records the watermark. The two-phase
+  `current_commit_version` pin makes advancing the watermark crash-safe. Seed the watermark row
+  (`last_commit_version = NULL`) before the first run — see `ddl/03`.
 - **Parse** each `json_data` with `json_parse` / `json_extract_scalar`, mapping to the same 42
   canonical columns and types as the legacy DDL (`provider_code = 'AVOD BISCTV'`, `capture_month =
   yyyymm`, `creative_duration = duration/1000`, `daisy_chain = unifiedChain` JSON, etc.).
@@ -74,20 +82,13 @@ The model reproduces `StagingToRawOccurrenceBisCtvUS` in Trino SQL:
 - **Filter** to `creative_type = 'video'` AND `creative_mime_type = 'video/mp4'` AND `publisher_id`
   in the 11-publisher whitelist — identical to legacy.
 - **Idempotency** is the legacy `LEFT ANTI JOIN` on `(provider_occurrence_id, capture_month)`
-  against the target, applied on incremental runs only.
+  against the target — kept alongside `table_changes`, exactly as legacy does.
 - The Iceberg table is partitioned by `capture_month` and sorted by `provider_occurrence_id`
   (the legacy `CLUSTER BY`).
 
 Two fidelity notes: `raw_json` stores the original occurrence JSON text (legacy stored a
 schema-normalized re-serialization — the raw text is a closer record of the source); and the model
 assumes the **Trino session time zone is UTC** so `captureDate` parses to UTC as it did in Spark.
-
-## Known caveat — incremental scan bound
-
-With no Trino change-data-feed, an incremental run rescans current staging (the anti-join keeps the
-result correct, never duplicated). For the PoC's sample volumes this is fine. To bound it at scale,
-add a `created_timestamp` watermark on staging (the `watermark_control` table + macros are already
-in the repo) or truncate staging after a successful raw load — a deliberate next step, not wired yet.
 
 ## Run it (on the VM)
 
@@ -104,6 +105,12 @@ aws s3 cp ./samples/ s3://dataplatformpoc-venketa/landing/ctv/ingestion/ --recur
 
 # 4. land: S3 .bz2 -> bronze staging (appends to the pre-created table), then archive
 docker compose exec ingestion python -m ingestion.ctv_ingestion
+
+# 4b. seed the staging->raw version watermark ONCE (last_commit_version = NULL -> first run is a
+#     full load, then it advances and every later run reads only new inserts via table_changes)
+docker exec -i trino trino --execute "INSERT INTO iceberg.silver.watermark_control \
+ (watermark_name, start_timestamp, end_timestamp, last_commit_version, current_commit_version, transaction_status, created_timestamp, updated_timestamp) \
+ VALUES ('BIS_CTV_US_INGESTION_STG_TO_RAW_OCC', NULL, NULL, NULL, NULL, 'SUCCEEDED', current_timestamp, current_timestamp)"
 
 # 5. staging -> raw (appends into the pre-created iceberg.bronze.digital_raw_occurrence)
 docker compose exec dbt dbt run --select digital_raw_occurrence

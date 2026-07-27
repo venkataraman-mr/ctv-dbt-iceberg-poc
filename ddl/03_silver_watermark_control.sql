@@ -11,8 +11,9 @@
 -- into last_commit_version + 'SUCCEEDED' at finish. This two-phase commit gives a crash-safe,
 -- exact-end watermark (no "source advanced mid-run" re-read window).
 --
--- Not used by Piece 1 (which relies on the staging->raw anti-join for idempotency); pre-created
--- here because the incrementals in the next pieces use it.
+-- USED by Piece 1: digital_raw_occurrence reads new staging inserts via system.table_changes driven
+-- by the version watermark 'BIS_CTV_US_INGESTION_STG_TO_RAW_OCC'. Seed that row (last_commit_version
+-- = NULL) before the first run so the initial full load runs and then advances the watermark.
 CREATE TABLE IF NOT EXISTS iceberg.silver.watermark_control (
     watermark_name          VARCHAR,
     start_timestamp         TIMESTAMP(6),

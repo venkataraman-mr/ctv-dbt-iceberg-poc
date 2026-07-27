@@ -17,8 +17,8 @@
 
   Seed one row per process before first use (see ddl/03_silver_watermark_control.sql).
 
-  NOTE: Piece 1 (digital_raw_occurrence) does NOT use these — it relies on the staging->raw anti-
-  join for idempotency. These macros are for the silver incrementals in the later pieces.
+  Piece 1 (digital_raw_occurrence) uses the VERSION pair with Trino's system.table_changes to read
+  only new staging inserts each run. The TIMESTAMP pair is for the MERGE-written sources later.
 #}
 
 {% macro snapshots_table(source_relation) %}

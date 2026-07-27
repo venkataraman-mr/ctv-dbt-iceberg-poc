@@ -1,9 +1,14 @@
 {#
   Piece 1 — CTV staging -> raw occurrence (dbt-trino port of StagingToRawOccurrenceBisCtvUS).
 
-  Reads the append-only staging landing, parses each occurrence's JSON, dedups to the latest row
-  per occurrence id, keeps only video / video-mp4 / whitelisted-publisher rows, and appends the
-  canonical 42-column occurrence to iceberg.bronze.digital_raw_occurrence.
+  Watermark-driven incremental read (mirrors the legacy version watermark + Delta table_changes):
+  the VERSION watermark (last_commit_version in silver.watermark_control) tracks the last staging
+  snapshot processed. Each run reads ONLY new inserts via Trino's system.table_changes between the
+  last processed snapshot (exclusive) and the current latest snapshot (inclusive) — no full scan.
+  The one exception is the very first run (watermark NULL): table_changes needs a start snapshot, so
+  we read the full current snapshot once, then record the watermark; every run after is incremental.
+  The watermark row 'BIS_CTV_US_INGESTION_STG_TO_RAW_OCC' must be seeded in watermark_control first
+  (ddl/03), with last_commit_version = NULL for the initial full load.
 
   Fidelity notes (mirrors legacy exactly except where noted):
     - creative_url_hash is NOT recomputed here — it is the precomputed exact Spark xxhash64(seed 42)
@@ -11,18 +16,21 @@
     - Dedup order key is the STAGING load timestamp (staging_loaded_at), standing in for the legacy
       CDF _commit_timestamp: latest-landed row per occurrence id wins.
     - Idempotency is the legacy LEFT ANTI JOIN on (provider_occurrence_id, capture_month) against
-      the target — applied on incremental runs only.
+      the target — kept alongside table_changes, exactly as legacy does.
     - raw_json stores the original occurrence JSON text (VARIANT->string). Legacy stored the
       schema-normalized re-serialization; keeping the raw text is a closer record of the source.
-    - Scale caveat: with no Trino CDF, an incremental run rescans current staging; the anti-join
-      keeps it correct. Bound later with a created_timestamp watermark or staging truncation.
     - Requires the Trino session time zone = UTC so captureDate parses to UTC (matches legacy).
 #}
+{%- set wm_name = 'BIS_CTV_US_INGESTION_STG_TO_RAW_OCC' -%}
+{%- set staging_src = source('bronze', 'digtial_raw_occurrence_ctv_staging') -%}
+{%- set wm = watermark_version_begin(wm_name, staging_src) -%}
+
 {{ config(
     materialized='incremental',
     incremental_strategy='append',
     schema='bronze',
     tags=['bronze'],
+    post_hook="{{ watermark_version_finish('" ~ wm_name ~ "') }}",
     properties={
       'partitioning': "ARRAY['capture_month']",
       'sorted_by': "ARRAY['provider_occurrence_id']"
@@ -30,12 +38,38 @@
 ) }}
 
 with staged as (
+{%- if wm.start_version is none %}
+    -- first run (no watermark): one-time full read, pinned at the end snapshot
     select
         json_parse(json_data) as j,
         json_data             as raw_json_text,
         creative_url_hash,
         created_timestamp     as staging_loaded_at
-    from {{ source('bronze', 'digtial_raw_occurrence_ctv_staging') }}
+    from {{ staging_src }}
+    {%- if wm.end_version is not none %} for version as of {{ wm.end_version }}{%- endif %}
+{%- elif wm.start_version == wm.end_version %}
+    -- no new staging snapshots since the last run
+    select
+        json_parse(json_data) as j,
+        json_data             as raw_json_text,
+        creative_url_hash,
+        created_timestamp     as staging_loaded_at
+    from {{ staging_src }}
+    where false
+{%- else %}
+    -- incremental: only inserts added after the last processed snapshot (Delta table_changes analog)
+    select
+        json_parse(json_data) as j,
+        json_data             as raw_json_text,
+        creative_url_hash,
+        created_timestamp     as staging_loaded_at
+    from table(system.table_changes(
+        schema_name       => 'bronze',
+        table_name        => 'digtial_raw_occurrence_ctv_staging',
+        start_snapshot_id => {{ wm.start_version }},
+        end_snapshot_id   => {{ wm.end_version }}))
+    where _change_type = 'insert'
+{%- endif %}
 ),
 
 typed as (
