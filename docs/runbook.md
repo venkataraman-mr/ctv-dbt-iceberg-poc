@@ -44,11 +44,13 @@ the data/metadata files land under `s3://dataplatformpoc-venketa/warehouse/`.
 
 ## 3. Reference sync (Option C) — VALIDATED (all 14 tables)
 
-Mirrors 14 `hive_metastore` Delta reference tables from Azure ADLS into Iceberg on S3 under the
-`reference` schema. **The full source→target table inventory (names, ADLS paths, reader, row counts)
-is in `docs/reference_tables.md`.** The load is **streamed + atomic**: it clears and reloads each table via one
-transaction (delete-all + append batches), so it is memory-bounded (safe for multi-million-row
-tables) and never drops the table — a mid-run failure leaves the prior data intact.
+Mirrors 14 `hive_metastore` Delta reference tables from Azure ADLS into Iceberg on S3, each under a
+schema named after its **source database** (`hive_metastore.<db>.<table>` → `iceberg.<db>.<table>`;
+schemas `km_preparation_db`, `km_preparation_gold_db`, `productcentral`). **The full source→target
+table inventory (names, ADLS paths, reader, row counts) is in `docs/reference_tables.md`.** The load
+is **streamed + atomic**: it clears and reloads each table via one transaction (delete-all + append
+batches), so it is memory-bounded (safe for multi-million-row tables) and never drops the table — a
+mid-run failure leaves the prior data intact.
 
 Run / operate:
 ```bash
@@ -56,8 +58,8 @@ docker compose exec ingestion python -m ingestion.reference_sync                
 docker compose exec ingestion python -m ingestion.reference_sync --table origin  # one table
 REF_SYNC_BATCH_ROWS=200000 docker compose exec ingestion python -m ingestion.reference_sync  # tune batch (default 1,000,000)
 # verify:
-docker exec -i trino trino --execute "SELECT count(*) FROM iceberg.reference.data_provider"
-docker exec -i trino trino --execute "SELECT table_name FROM iceberg.information_schema.tables WHERE table_schema='reference' ORDER BY 1"
+docker exec -i trino trino --execute "SELECT count(*) FROM iceberg.km_preparation_db.data_provider"
+docker exec -i trino trino --execute "SELECT table_schema, table_name FROM iceberg.information_schema.tables WHERE table_schema IN ('km_preparation_db','km_preparation_gold_db','productcentral') ORDER BY 1,2"
 # schedule daily 02:15 UTC (logs to /var/log/ref_sync.log):
 crontab scripts/cron/reference_sync.cron   # confirm: crontab -l
 ```
@@ -73,9 +75,9 @@ Two-reader design (in `ingestion/reference_sync.py`):
   the CA env vars). Pinned `duckdb==1.5.5`.
 
 Per-batch normalization: binary columns → base64 strings (readable, matches how Databricks shows
-binary); tz-aware timestamps → UTC wall-clock **without** zone (Iceberg `timestamp`), so values read
-as UTC in every engine/client (matching the source Delta `…Z`). The Iceberg schema is derived from
-the normalized Arrow schema per run; additive source changes auto-evolve, type/removed-column
+binary); timestamps → UTC **with time zone** (Iceberg `timestamptz`), matching Databricks `TIMESTAMP`
+(tz-aware sources keep their instant; naive sources are treated as UTC). The Iceberg schema is derived
+from the normalized Arrow schema per run; additive source changes auto-evolve, type/removed-column
 changes fail loudly, and the run stops at the first failing table.
 
 ## 4. Validate-at-stand-up items (configs here are starting points)

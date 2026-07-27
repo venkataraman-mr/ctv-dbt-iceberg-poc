@@ -12,11 +12,14 @@ Reader: delta-rs (rustls auth; INT96 timestamps coerced to microseconds). DuckDB
 fallback for tables delta-rs can't read (deletionVectors / v2Checkpoint); it needs the system CA
 bundle (installed in the ingestion image).
 
+Each source table hive_metastore.<db>.<table> mirrors to iceberg.<db>.<table> — the target schema
+is the source database name (not a single shared 'reference' schema).
+
 Normalization applied to every batch (_normalize_table):
   - binary columns  -> base64 strings (Trino renders raw binary as '\\u0000...'; base64 is readable
     and matches how Databricks displays binary).
-  - tz-aware timestamps -> UTC wall-clock WITHOUT zone (Iceberg 'timestamp'), so values render as
-    UTC in every engine/client, matching the source Delta's '...Z'.
+  - timestamps -> UTC WITH time zone (Iceberg 'timestamptz'), matching Databricks TIMESTAMP: a
+    tz-aware source keeps its instant (converted to UTC); a naive source is treated as UTC.
 
 Policy: schema drift AUTO-EVOLVES additively (new source columns are added); anything else (type
 change, removed column) fails on append. The daily run STOPS at the first table that fails.
@@ -50,8 +53,9 @@ _BASE = "abfss://databricks@stdlg2commondbrickspeu2.dfs.core.windows.net/delta"
 
 
 def _t(db: str, table: str) -> dict:
-    """One reference-table entry: source Delta path -> Iceberg reference.<table>."""
-    return {"delta_path": f"{_BASE}/{db}/{table}", "target_schema": "reference", "target_table": table}
+    """One reference-table entry: source Delta path -> Iceberg <db>.<table>. The target schema
+    mirrors the source database name (hive_metastore.<db>.<table> -> iceberg.<db>.<table>)."""
+    return {"delta_path": f"{_BASE}/{db}/{table}", "target_schema": db, "target_table": table}
 
 
 # All hive_metastore reference tables to mirror into Iceberg (from the reference-table inventory).
@@ -80,8 +84,8 @@ def _norm_field(f: pa.Field) -> pa.Field:
     t = f.type
     if pa.types.is_binary(t) or pa.types.is_large_binary(t):
         return f.with_type(pa.string())
-    if pa.types.is_timestamp(t) and t.tz is not None:
-        return f.with_type(pa.timestamp(t.unit))
+    if pa.types.is_timestamp(t):
+        return f.with_type(pa.timestamp(t.unit, tz="UTC"))
     return f
 
 
@@ -96,8 +100,11 @@ def _normalize_table(tbl: pa.Table) -> pa.Table:
         if pa.types.is_binary(t) or pa.types.is_large_binary(t):
             cols.append(pa.array([None if v is None else base64.b64encode(v).decode("ascii")
                                   for v in tbl.column(i).to_pylist()], type=pa.string()))
-        elif pa.types.is_timestamp(t) and t.tz is not None:
-            cols.append(tbl.column(i).cast(pa.int64()).cast(pa.timestamp(t.unit)))
+        elif pa.types.is_timestamp(t):
+            # Store as UTC-aware (Iceberg timestamptz), matching Databricks TIMESTAMP. A tz-aware
+            # source keeps its instant (relabelled/converted to UTC); a naive source (e.g. INT96-
+            # coerced) is treated as UTC wall-clock — no shift.
+            cols.append(tbl.column(i).cast(pa.timestamp(t.unit, tz="UTC")))
         else:
             cols.append(tbl.column(i))
     return pa.Table.from_arrays(cols, schema=_normalized_schema(tbl.schema))

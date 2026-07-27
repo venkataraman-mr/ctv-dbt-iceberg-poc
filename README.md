@@ -55,10 +55,11 @@ PyIceberg passes the warehouse *name*; and Nessie vends `py-io-impl=FsspecFileIO
 PyArrow client-side (`force_pyarrow_io`).
 
 *Reference sync — Option C (2026-07-25):* all **14** hive_metastore Delta reference tables mirror to
-`iceberg.reference.*` via a streamed, atomic clean reload (memory-bounded, never drops the table).
-delta-rs is the primary reader; DuckDB is the fallback for deletion-vector / v2Checkpoint tables
-(with the libcurl Azure transport for TLS). Binary→base64 and UTC-timestamp normalization keep the
-output clean. Daily cron is ready. Details in `docs/runbook.md` §3.
+`iceberg.<db>.<table>` — the target schema is the source database name (`km_preparation_db`,
+`km_preparation_gold_db`, `productcentral`) — via a streamed, atomic clean reload (memory-bounded,
+never drops the table). delta-rs is the primary reader; DuckDB is the fallback for deletion-vector /
+v2Checkpoint tables (with the libcurl Azure transport for TLS). Binary→base64 and UTC-with-time-zone
+timestamp normalization keep the output clean. Daily cron is ready. Details in `docs/runbook.md` §3.
 
 *Prod Postgres + Trino catalog (2026-07-26):* the cross-cloud path (previously blocked) is open and
 authenticated (verified via `scripts/pg_connectivity_test.sh` — psql OK as `databricks_admin_user` @

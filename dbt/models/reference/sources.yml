@@ -1,10 +1,11 @@
 version: 2
 sources:
-  # reference/lookup tables synced from Azure -> Iceberg on S3 (Option C). Read-only.
+  # reference/lookup tables synced from Azure hive_metastore -> Iceberg on S3 (Option C). Read-only.
+  # Each source database is mirrored to a same-named Iceberg schema (iceberg.<db>.<table>).
   # Future: repoint to UC managed Iceberg (direct read) once the Databricks upgrade lands.
-  - name: reference
+  - name: km_preparation_db
     database: iceberg
-    schema: reference
+    schema: km_preparation_db
     tables:
       - name: adscore_provided_adservers
       - name: data_provider
@@ -14,7 +15,17 @@ sources:
       - name: standard_ad_size
       - name: standard_mime_type
       - name: vx0_vx2_component_mapping
+
+  - name: km_preparation_gold_db
+    database: iceberg
+    schema: km_preparation_gold_db
+    tables:
       - name: media_property_flatten
+
+  - name: productcentral
+    database: iceberg
+    schema: productcentral
+    tables:
       - name: company
       - name: product_flatten
       - name: productmap
