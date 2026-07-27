@@ -9,3 +9,6 @@ deltalake==0.25.5
 # 1.5.x (current stable) — future-proofs the runtime delta/azure extension downloads (the repo
 # eventually drops very old versions). 1.1.3 also worked; bumped only for longevity.
 duckdb==1.5.5
+# CTV landing (Piece 1): exact Spark xxhash64(seed 42) for creative_url_hash. Verified against
+# real PySpark 3.5 xxhash64; Trino's built-in (seed 0) cannot reproduce it, so we precompute here.
+xxhash==3.5.0

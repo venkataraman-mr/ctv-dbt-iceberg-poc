@@ -1,14 +1,34 @@
 version: 2
 sources:
-  # bronze occurrence tables — owned by ingestion (PyIceberg / dbt staging->raw), read-only here
+  # bronze staging landing — owned by the Python landing step (ingestion/ctv_ingestion.py),
+  # append-only, read-only here. Name mirrors the legacy Databricks table verbatim (incl. the
+  # historical "digtial" misspelling) per the "mirror legacy" decision.
   - name: bronze
     database: iceberg
     schema: bronze
     tables:
-      - name: digital_raw_occurrence          # canonical CTV/Digital occurrence table (append-only)
-        description: "Canonical raw occurrence (Iceberg, append-only). TODO: declare columns from DDL."
-      - name: ctv_raw_occurrence_staging       # CTV bz2/json staging landing
-        description: "CTV staging landing (VARIANT->string json_data). TODO: declare columns."
+      - name: digtial_raw_occurrence_ctv_staging   # CTV bz2/json staging landing (append-only)
+        description: >
+          CTV staging landing. One row per JSON occurrence object: json_data (VARIANT->string JSON
+          text), record_index, source_filename, blob_name, created_timestamp (UTC, no zone), and
+          creative_url_hash (precomputed exact Spark xxhash64 seed 42). Produced by the S3 .bz2
+          landing step; consumed by the staging->raw model digital_raw_occurrence.
+        columns:
+          - name: json_data
+            description: "Occurrence JSON text (one object per row); parsed in staging->raw."
+          - name: record_index
+            description: "Index of the object within its source file."
+          - name: source_filename
+            description: "Source file name (without .bz2)."
+          - name: blob_name
+            description: "Source object key (with .bz2)."
+          - name: created_timestamp
+            description: "Landing/batch load time (UTC, no zone). Ordering key for dedup."
+          - name: creative_url_hash
+            description: "Precomputed exact Spark xxhash64(seed 42) of the creative.url expression."
+
+  # NOTE: digital_raw_occurrence is NOT a source — it is produced by the dbt incremental model
+  # models/bronze/digital_raw_occurrence.sql (staging->raw). Downstream pieces ref() it.
 
   # watermark control table (version + timestamp watermarks live here)
   - name: control
