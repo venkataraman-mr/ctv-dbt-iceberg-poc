@@ -128,6 +128,15 @@ staging->raw incremental (`bronze.digital_raw_occurrence`). Incremental reads vi
 `xxhash64(seed 42)` precomputed at landing. Persistent tables pre-created by DDL (`ddl/`). Full
 detail, run steps, and design notes: **`docs/ctv_ingestion.md`**; table structures: **`ddl/README.md`**.
 
+## 4c. Pieces 3–5 tables provisioned (2026-07-28)
+All 20 persistent Iceberg tables pre-created by DDL (`ddl/00`–`07`): bronze staging/raw + creative (5),
+silver watermark + Piece 4/5 (7), gold creative/occurrence/deployment (8). Scripts `04`–`07` were
+generated from the Databricks `table_ddl` notebooks (Spark→Trino types; IDENTITY/DEFAULT dropped —
+`occurrence_id`/`creative_id` come from Postgres sequences; CLUSTER BY → partition(`capture_month`) +
+`sorted_by`). dbt sources wired for the UC `reference`/`spend` dims and Postgres reads (`creatives.*`,
+`vx2_taxonomy.*` — provisional). Coverage audited vs the deep-dive; archiving excluded (N/A for CTV).
+Run/verify: see **`ddl/README.md`**.
+
 ## 5. Prod Postgres — reachability RESOLVED, Trino catalog WIRED (2026-07-26)
 Cross-cloud reachability was BLOCKED; DevOps opened the path (verified: `bash scripts/pg_connectivity_test.sh`
 → DNS ok, TCP OPEN, psql auth OK as `databricks_admin_user` @ `vxcentral`, PostgreSQL 16.4). The Trino
@@ -142,6 +151,13 @@ docker exec -i trino trino --execute "SHOW TABLES FROM postgres.creatives"   # a
 Writes to Postgres go via psycopg2 cloned stored procs (Piece 3), not Trino. `databricks_admin_user`
 is a broad admin login — scope it down before anything beyond the PoC. If Trino errors on TLS
 (e.g. "no encryption"/SSL), append `?sslmode=require` to the `connection-url`.
+
+Connection hygiene (2026-07-28): `postgres.properties` sets `?ApplicationName=trino-ctv-poc` (so
+Trino's Postgres connections are attributable in `pg_stat_activity` despite the shared login) plus
+`metadata.cache-ttl=30m` to bound catalog re-queries. This came out of a DBA report of connection
+churn on `databricks_admin_user`, traced to a **Unity Catalog foreign-catalog federation** polling
+`pg_stat_user_tables` — not our stack. Durable fix (later): a dedicated, connection-limited Postgres
+role per consumer (Trino + the UC federation each their own).
 
 ## 5b. Later
 - **Airflow** — cron first; Airflow later.

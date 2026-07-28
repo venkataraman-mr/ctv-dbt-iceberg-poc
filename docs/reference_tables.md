@@ -1,15 +1,19 @@
 # Reference table inventory (Option C sync)
 
-The reference/lookup dimensions mirrored from Databricks **hive_metastore** (Azure ADLS Delta) into
-**Iceberg** on S3, by `ingestion/reference_sync.py` (daily). Each table keeps its **source database
-name as the target schema** — `hive_metastore.<db>.<table>` → `iceberg.<db>.<table>` — rather than a
-single shared `reference` schema. All sources live on one ADLS container/account:
+The reference/lookup dimensions mirrored from Databricks (Azure ADLS Delta) into **Iceberg** on S3 by
+one shared engine (`ingestion/common/ref_sync_engine.py`). Each table keeps its **source database name
+as the target schema** — `<db>.<table>` → `iceberg.<db>.<table>`. There are two syncs (thin configs
+over the engine), differing only in the source storage account/base path:
 
-```
-abfss://databricks@stdlg2commondbrickspeu2.dfs.core.windows.net/delta/<db>/<table>
-```
+- **hive** (`reference_sync.py`) — 14 tables from `abfss://databricks@stdlg2commondbrickspeu2.dfs.core.windows.net/delta/<db>/<table>`.
+- **Unity Catalog** (`uc_reference_sync.py`) — 6 tables from `abfss://dbwcontainer@vxxdbwcommonpesteu2.dfs.core.windows.net/deltas/mrdpp/<db>/<table>`.
 
-Targets are declared as dbt sources (one per schema) in `dbt/models/reference/sources.yml`.
+Targets are dbt sources (one per schema) in `dbt/models/reference/sources.yml`. The `vx2_taxonomy`
+dims (`d_advertiser`, `d_product`) are MANAGED Databricks tables with no reachable Delta path, so they
+are read directly from Postgres (`postgres.vx2_taxonomy.*`), **not synced** — see
+`dbt/models/creatives/sources.yml`.
+
+### Hive sync — 14 tables
 
 | # | Source (hive_metastore.db.table) | ADLS path (…/delta/…) | Target (iceberg.db.table) | Reader | Deletion vectors | ~Rows (last run) |
 | :-- | :-- | :-- | :-- | :-- | :-- | --: |
@@ -28,10 +32,24 @@ Targets are declared as dbt sources (one per schema) in `dbt/models/reference/so
 | 13 | productcentral.vx0_vx2_advertiser_mapping | productcentral/vx0_vx2_advertiser_mapping | productcentral.vx0_vx2_advertiser_mapping | **DuckDB** | **yes** | 1,017 |
 | 14 | productcentral.vx0_vx2_mattress_product_mapping | productcentral/vx0_vx2_mattress_product_mapping | productcentral.vx0_vx2_mattress_product_mapping | delta-rs | no | 127 |
 
+### Unity Catalog sync — 6 tables (`abfss://dbwcontainer@vxxdbwcommonpesteu2…/deltas/mrdpp/<db>/<table>`)
+
+| # | Source (uc db.table) | delta path (…/deltas/mrdpp/…) | Target (iceberg.db.table) | Reader | ~Rows (last run) |
+| :-- | :-- | :-- | :-- | :-- | --: |
+| 1 | reference.creative_match_type | reference/creative_match_type | reference.creative_match_type | **DuckDB** | 3 |
+| 2 | reference.global_market | reference/global_market | reference.global_market | **DuckDB** | 243 |
+| 3 | reference.provider_global_market_map | reference/provider_global_market_map | reference.provider_global_market_map | **DuckDB** | 40,443 |
+| 4 | reference.media | reference/media | reference.media | **DuckDB** | 10 |
+| 5 | spend.digital_dmi_prelim_spend_average_by_media | spend/digital_dmi_prelim_spend_average_by_media | spend.digital_dmi_prelim_spend_average_by_media | **DuckDB** | 7 |
+| 6 | spend.digital_dmi_prelim_spend_average_by_property | spend/digital_dmi_prelim_spend_average_by_property | spend.digital_dmi_prelim_spend_average_by_property | **DuckDB** | 9,396 |
+
+All six UC tables carry deletion vectors / v2Checkpoint, so all load via the DuckDB fallback. Used by:
+`reference.*` (creative dedupe + market mapping) in Pieces 4–5; `spend.*` averages read by Piece 5
+(`raw→gold`) to assign `prelim_spend`/`prelim_impressions`.
+
 Notes for developers:
-- **Target schema = source database.** The three schemas created in Iceberg: `km_preparation_db`
-  (8 tables), `km_preparation_gold_db` (1), `productcentral` (5). The sync creates each namespace on
-  demand.
+- **Target schema = source database.** Iceberg schemas created on demand: hive → `km_preparation_db`
+  (8), `km_preparation_gold_db` (1), `productcentral` (5); UC → `reference` (4), `spend` (2). 20 total.
 - **Reader** is chosen automatically per table: **delta-rs** is primary; tables with **deletion
   vectors / v2Checkpoint** (5 of 14) can't be read by delta-rs's PyArrow-dataset path and fall back to
   **DuckDB** (which applies the deletion vectors). Row counts for DuckDB tables are the DV-applied

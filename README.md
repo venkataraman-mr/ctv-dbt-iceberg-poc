@@ -46,7 +46,7 @@ Use a second VS Code window connected via **Remote-SSH** to the VM for *running 
 (docker/dbt/logs) — not for editing the same files, to avoid divergence between the two copies.
 
 ## Status
-**Foundation + Reference sync + Postgres connectivity + CTV ingestion (Piece 1) VALIDATED.**
+**Foundation + Reference sync (hive + UC) + Postgres + CTV ingestion (Piece 1) VALIDATED; Pieces 3–5 tables provisioned.**
 
 *Foundation (2026-07-22):* the full stack (nessie · trino · dbt · ingestion) builds and runs on the
 EC2 VM, and the two-engine smoke test passes — Trino and PyIceberg both read/write one Iceberg table
@@ -55,18 +55,22 @@ through a single Nessie catalog on S3, and dbt connects to Trino. Config nailed 
 PyIceberg passes the warehouse *name*; and Nessie vends `py-io-impl=FsspecFileIO`, overridden to
 PyArrow client-side (`force_pyarrow_io`).
 
-*Reference sync — Option C (2026-07-25):* all **14** hive_metastore Delta reference tables mirror to
-`iceberg.<db>.<table>` — the target schema is the source database name (`km_preparation_db`,
-`km_preparation_gold_db`, `productcentral`) — via a streamed, atomic clean reload (memory-bounded,
-never drops the table). delta-rs is the primary reader; DuckDB is the fallback for deletion-vector /
-v2Checkpoint tables (with the libcurl Azure transport for TLS). Binary→base64 and UTC-with-time-zone
-timestamp normalization keep the output clean. Daily cron is ready. Details in `docs/runbook.md` §3.
+*Reference sync — Option C (2026-07-25; extended 2026-07-28):* reference/lookup dims mirror to
+`iceberg.<db>.<table>` (target schema = source db) via one shared streaming engine
+(`ingestion/common/ref_sync_engine.py`) — atomic clean reload (memory-bounded; delta-rs primary,
+DuckDB fallback for deletion-vector / v2Checkpoint tables; binary→base64 + UTC-with-time-zone
+normalization). Two thin configs: **hive** (`reference_sync.py`, 14 tables from the stdlg2 common
+Delta path) and **Unity Catalog** (`uc_reference_sync.py`, 6 tables — `reference.*` + `spend.*` — from
+a second Azure blob). **20 reference tables loaded.** `vx2_taxonomy` dims are MANAGED (no reachable
+path) → read from Postgres. Daily cron ready. Details in `docs/runbook.md` §3/§3b + `docs/reference_tables.md`.
 
 *Prod Postgres + Trino catalog (2026-07-26):* the cross-cloud path (previously blocked) is open and
 authenticated (verified via `scripts/pg_connectivity_test.sh` — psql OK as `databricks_admin_user` @
 `vxcentral`, PostgreSQL 16.4). The Trino `postgres` catalog is wired
 (`infra/trino/catalog/postgres.properties`, creds via `${ENV:PG_*}` — no secrets committed), so the
-creative flow (Pieces 3–4) is unblocked. Details in `docs/runbook.md` §5.
+creative flow (Pieces 3–4) is unblocked. Connections are labeled `application_name=trino-ctv-poc`
+with metadata caching to bound load (after a DBA flagged connection churn on the shared login —
+traced to a Unity Catalog foreign-catalog federation, not our stack). Details in `docs/runbook.md` §5.
 
 *CTV ingestion — Piece 1 (2026-07-27):* the CTV occurrence flow lands and transforms end-to-end on
 the VM. A Python landing step streams `.bz2`/plain-JSON files from `s3://…/landing/ctv/ingestion/`
@@ -82,7 +86,14 @@ persistent tables are pre-created by DDL (`ddl/`). Details in `docs/ctv_ingestio
 `views_enabled: false` (incremental temp relations become tables), and a legacy Databricks view is
 ported as an **ephemeral** dbt model (`media_property_flatten_vx0_vw`).
 
-Next up: Pieces 2–5 (silver/gold + creative flow) in order. Some library upgrades are parked as a
+*Pieces 3–5 tables provisioned (2026-07-28):* all 20 persistent Iceberg tables are pre-created by DDL
+(`ddl/00`–`07`) — bronze staging/raw/creative, silver watermark + Piece 4/5, gold creative/occurrence/
+deployment — generated from the Databricks `table_ddl` notebooks (Spark→Trino types, IDENTITY/DEFAULT
+dropped, CLUSTER BY → partition/sort). dbt sources are wired for the UC reference dims, `spend`, and
+Postgres reads (`creatives.*`, `vx2_taxonomy.*` — provisional). Coverage was audited against the
+deep-dive; archiving is deliberately excluded (N/A for CTV). See `ddl/README.md`.
+
+Next up: **Piece 3 (creative push)**, then Pieces 4–5, in order. Some library upgrades are parked as a
 future action item (`docs/runbook.md` §6).
 
 **Resuming in a new window?** Start with `docs/runbook.md`, `docs/ctv_ingestion.md`, and `scripts/vm_setup.md`.
