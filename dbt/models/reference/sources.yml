@@ -48,19 +48,13 @@ sources:
       - name: provider_global_market_map
       - name: media
 
-  # Also loaded by the UC sync (same UC blob): spend averages (read by Piece 5 to assign
-  # prelim_spend/impressions) and vx2 taxonomy dims (advertiser/product masters for the creative
-  # component/translation flow). Sync-created (schema-on-read); no hand-written DDL.
+  # Spend averages — loaded by the UC sync (external Delta on the same UC blob). Read by Piece 5 to
+  # assign prelim_spend/impressions. Sync-created (schema-on-read); no hand-written DDL.
+  # (vx2_taxonomy.d_advertiser/d_product are MANAGED tables — read from Postgres instead; see
+  # dbt/models/creatives/sources.yml.)
   - name: spend
     database: iceberg
     schema: spend
     tables:
       - name: digital_dmi_prelim_spend_average_by_media
       - name: digital_dmi_prelim_spend_average_by_property
-
-  - name: vx2_taxonomy
-    database: iceberg
-    schema: vx2_taxonomy
-    tables:
-      - name: d_advertiser
-      - name: d_product

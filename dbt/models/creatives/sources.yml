@@ -16,3 +16,15 @@ sources:
       - name: creative_dedupe_map
       - name: component_coding
       - name: creative_classification_engine_holding
+
+  # vx2 taxonomy dims (advertiser/product masters) — read straight from Postgres via the Trino
+  # catalog. In Databricks these are MANAGED tables synced from Postgres (OmnisReferenceSync); we
+  # skip that hop and read the Postgres source of truth directly. Used by the creative
+  # component/translation flow. (If we later want them in Iceberg for read locality, a small dbt
+  # model can CTAS them into iceberg.vx2_taxonomy.* — for now, direct read.)
+  - name: vx2_taxonomy
+    database: postgres          # Trino catalog name (not Iceberg)
+    schema: vx2_taxonomy
+    tables:
+      - name: d_advertiser
+      - name: d_product

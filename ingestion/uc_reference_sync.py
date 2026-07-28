@@ -43,10 +43,11 @@ TABLE_MAP = [
     # spend averages — read by Piece 5 (raw->gold occurrence) to assign prelim_spend/impressions
     _t("spend", "digital_dmi_prelim_spend_average_by_media"),
     _t("spend", "digital_dmi_prelim_spend_average_by_property"),
-    # vx2 taxonomy dims — advertiser/product masters used by the creative component/translation flow
-    _t("vx2_taxonomy", "d_advertiser"),
-    _t("vx2_taxonomy", "d_product"),
-    # Add further UC reference/lookup tables here as pieces need them (all on the same UC blob).
+    # NOTE: vx2_taxonomy.d_advertiser / d_product are MANAGED Databricks tables (USING delta, no
+    # LOCATION) -> no reachable Delta path on this blob, so they can't be path-synced. They are read
+    # directly from Postgres instead (their origin) via the Trino postgres catalog — see
+    # dbt/models/creatives/sources.yml (source 'vx2_taxonomy').
+    # Add further path-external UC reference/lookup tables here as pieces need them.
 ]
 
 STORAGE = {"account_name": config.UC_AZURE_ACCOUNT, "account_key": config.UC_AZURE_KEY}
