@@ -8,10 +8,11 @@ Architecture source of truth: Google Drive → `CTV_occurrence_flow_architecture
 ```
 docker-compose.yml     stack: nessie · trino · dbt · ingestion
 infra/                 Dockerfiles + Trino/Nessie config
-dbt/                   dbt project (bronze sources, silver/gold models, watermark macros)
-ingestion/             Python: reference sync (Option C) + CTV ingestion (PyIceberg)
-scripts/               vm_setup.md (staged setup) + smoke_test.sh + cron/
-docs/                  runbook + architecture pointer
+ddl/                   Trino DDL for persistent tables (create-before-run) + README
+dbt/                   dbt project (bronze/reference sources, staging->raw + ref models, watermark macros)
+ingestion/             Python: reference sync (Option C) + CTV landing (PyIceberg)
+scripts/               vm_setup.md (staged setup) + smoke_test.sh + cron/ + upload_ctv_sample.ps1
+docs/                  runbook + reference/ingestion docs + architecture pointer
 ```
 
 ## Prerequisites
@@ -45,7 +46,7 @@ Use a second VS Code window connected via **Remote-SSH** to the VM for *running 
 (docker/dbt/logs) — not for editing the same files, to avoid divergence between the two copies.
 
 ## Status
-**Phase 1 (Foundation) + Phase 2 (Reference sync) + Postgres connectivity VALIDATED.**
+**Foundation + Reference sync + Postgres connectivity + CTV ingestion (Piece 1) VALIDATED.**
 
 *Foundation (2026-07-22):* the full stack (nessie · trino · dbt · ingestion) builds and runs on the
 EC2 VM, and the two-engine smoke test passes — Trino and PyIceberg both read/write one Iceberg table
@@ -67,7 +68,21 @@ authenticated (verified via `scripts/pg_connectivity_test.sh` — psql OK as `da
 (`infra/trino/catalog/postgres.properties`, creds via `${ENV:PG_*}` — no secrets committed), so the
 creative flow (Pieces 3–4) is unblocked. Details in `docs/runbook.md` §5.
 
-Next up: implement the pipeline Pieces 1→5 in order, **starting with CTV bronze ingestion (Piece 1–2)**.
-Some library upgrades are parked as a future action item (`docs/runbook.md` §6).
+*CTV ingestion — Piece 1 (2026-07-27):* the CTV occurrence flow lands and transforms end-to-end on
+the VM. A Python landing step streams `.bz2`/plain-JSON files from `s3://…/landing/ctv/ingestion/`
+into the bronze staging table (auto-detecting bzip2, memory-bounded batches, archiving processed
+files), and a dbt-trino incremental model transforms staging → `bronze.digital_raw_occurrence`
+(42-column canonical schema, dedup + video/`video/mp4`/publisher filter + anti-join). Reads are
+watermark-driven via Trino `system.table_changes` (the Delta `table_changes` analog), so runs are
+incremental, not full scans. `creative_url_hash` is the exact Spark `xxhash64(seed 42)`, precomputed
+at landing (verified vs real PySpark). All timestamps are `timestamp(6) with time zone` (UTC), and
+persistent tables are pre-created by DDL (`ddl/`). Details in `docs/ctv_ingestion.md`.
 
-**Resuming in a new window?** Start with `docs/runbook.md` and `scripts/vm_setup.md`.
+*Views:* the Nessie catalog does not support Iceberg views or materialized views, so dbt runs with
+`views_enabled: false` (incremental temp relations become tables), and a legacy Databricks view is
+ported as an **ephemeral** dbt model (`media_property_flatten_vx0_vw`).
+
+Next up: Pieces 2–5 (silver/gold + creative flow) in order. Some library upgrades are parked as a
+future action item (`docs/runbook.md` §6).
+
+**Resuming in a new window?** Start with `docs/runbook.md`, `docs/ctv_ingestion.md`, and `scripts/vm_setup.md`.

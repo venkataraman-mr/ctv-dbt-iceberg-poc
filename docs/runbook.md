@@ -90,7 +90,21 @@ changes fail loudly, and the run stops at the first failing table.
 - **`table_changes` on delete-file snapshots** — confirm it errors (locks the Half B timestamp-watermark decision).
 - **Trino Azure filesystem** props (`fs.native-azure.enabled`) if any table's data stays on ADLS.
 - **Healthchecks / image versions** — pin and adjust.
-- **VARIANT -> string** parsing for CTV query patterns.
+- **VARIANT -> string** parsing for CTV query patterns — RESOLVED (staging `json_data` is VARCHAR;
+  the staging->raw model parses it with `json_parse` / `json_extract_scalar`, and `daisy_chain` /
+  `raw_json` are stored as VARCHAR via `json_format`).
+- **Nessie has no view support** — the Nessie catalog implements neither view nor materialized-view
+  management (`createView is not supported for Iceberg Nessie catalogs`). Consequences, both handled:
+  dbt runs with `views_enabled: false` (its incremental temp relations become tables, not views), and
+  a legacy Databricks view is ported as an **ephemeral** dbt model (`media_property_flatten_vx0_vw`).
+  Real views would require a REST-type catalog against Nessie, or a separate view-capable catalog.
+
+## 4b. CTV ingestion (Piece 1) — VALIDATED (2026-07-27)
+End-to-end on the VM: S3 `.bz2`/plain-JSON → bronze staging (PyIceberg landing) → dbt-trino
+staging->raw incremental (`bronze.digital_raw_occurrence`). Incremental reads via Trino
+`system.table_changes` driven by the version watermark. `creative_url_hash` = exact Spark
+`xxhash64(seed 42)` precomputed at landing. Persistent tables pre-created by DDL (`ddl/`). Full
+detail, run steps, and design notes: **`docs/ctv_ingestion.md`**; table structures: **`ddl/README.md`**.
 
 ## 5. Prod Postgres — reachability RESOLVED, Trino catalog WIRED (2026-07-26)
 Cross-cloud reachability was BLOCKED; DevOps opened the path (verified: `bash scripts/pg_connectivity_test.sh`
