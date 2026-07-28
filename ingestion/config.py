@@ -10,9 +10,16 @@ NESSIE_ICEBERG_URI = os.environ.get("NESSIE_ICEBERG_URI", "http://nessie:19120/i
 # The warehouse NAME registered in Nessie (nessie.catalog.default-warehouse), not the s3:// URI.
 NESSIE_WAREHOUSE   = os.environ.get("NESSIE_WAREHOUSE", "warehouse")
 
-# Azure ADLS (reference sync). Account key works for both delta-rs and the DuckDB fallback.
+# Azure ADLS (hive_metastore reference sync). Account key works for delta-rs and the DuckDB fallback.
 AZURE_ACCOUNT = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME")
 AZURE_KEY     = os.environ.get("AZURE_STORAGE_ACCOUNT_KEY")
+
+# Unity Catalog reference sync (uc_reference_sync.py) — a SECOND Azure storage account (the UC blob).
+# Same engine as the hive sync; only the account key/name differ (the base path is hardcoded in
+# uc_reference_sync.py, like reference_sync.py). UC_AZURE_STORAGE_ACCOUNT_NAME must be the account in
+# that base path (vxxdbwcommonpesteu2).
+UC_AZURE_ACCOUNT = os.environ.get("UC_AZURE_STORAGE_ACCOUNT_NAME")
+UC_AZURE_KEY     = os.environ.get("UC_AZURE_STORAGE_ACCOUNT_KEY")
 
 # CTV landing (Piece 1). Source of truth is now S3: sample .bz2 files are dropped under
 # LANDING_INGESTION; the landing step decompresses/parses them into bronze staging and moves the

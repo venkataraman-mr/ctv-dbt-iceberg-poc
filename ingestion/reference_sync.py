@@ -1,28 +1,12 @@
-"""Reference-data sync (Option C): Azure ADLS Delta -> Iceberg on S3 (Nessie).
+"""Reference-data sync (Option C) — hive_metastore tables: Azure ADLS Delta -> Iceberg on S3.
 
-Streams each reference Delta table in record batches and reloads the target Iceberg table via a
-single atomic transaction (delete-all + append-batches). This is:
-  - MEMORY-BOUNDED — peak RAM is ~one batch, so 10GB+ tables load on a modest VM (no whole-table
-    materialization).
-  - CLEAN LOAD, NO DROP — the table (and its schema/history/field-IDs) is kept; every run replaces
-    all rows. The delete + appends commit as ONE snapshot, so a mid-run failure leaves the previous
-    data intact (never half-loaded, never empty).
+Thin config over the shared engine (ingestion/common/ref_sync_engine.py). The engine holds all the
+logic (streaming + atomic reload, delta-rs / DuckDB readers, binary->base64 + timestamptz-UTC
+normalization); this file only declares the source storage account, base path, and table map.
+The Unity Catalog sibling (uc_reference_sync.py) is identical but points at a different account.
 
-Reader: delta-rs (rustls auth; INT96 timestamps coerced to microseconds). DuckDB is a per-table
-fallback for tables delta-rs can't read (deletionVectors / v2Checkpoint); it needs the system CA
-bundle (installed in the ingestion image).
-
-Each source table hive_metastore.<db>.<table> mirrors to iceberg.<db>.<table> — the target schema
-is the source database name (not a single shared 'reference' schema).
-
-Normalization applied to every batch (_normalize_table):
-  - binary columns  -> base64 strings (Trino renders raw binary as '\\u0000...'; base64 is readable
-    and matches how Databricks displays binary).
-  - timestamps -> UTC WITH time zone (Iceberg 'timestamptz'), matching Databricks TIMESTAMP: a
-    tz-aware source keeps its instant (converted to UTC); a naive source is treated as UTC.
-
-Policy: schema drift AUTO-EVOLVES additively (new source columns are added); anything else (type
-change, removed column) fails on append. The daily run STOPS at the first table that fails.
+Each source table hive_metastore.<db>.<table> mirrors to iceberg.<db>.<table> (target schema =
+source database name).
 
 Usage:
   python -m ingestion.reference_sync                    # all tables (daily cron)
@@ -30,35 +14,21 @@ Usage:
   REF_SYNC_BATCH_ROWS=500000 python -m ingestion.reference_sync   # tune batch size
 """
 import argparse
-import base64
-import os
 import sys
 
-import duckdb
-import pyarrow as pa
-import pyarrow.dataset as pads
-from deltalake import DeltaTable
-from pyiceberg.expressions import AlwaysTrue
-from pyiceberg.io.pyarrow import _ConvertToIcebergWithoutIDs, visit_pyarrow
-from pyiceberg.schema import assign_fresh_schema_ids
-
 from ingestion import config
-from ingestion.common.catalog import get_catalog, force_pyarrow_io
-
-# Rows per streamed batch. 1M keeps commits few (faster on multi-million-row tables) while staying
-# well within RAM; lower it via REF_SYNC_BATCH_ROWS if a very wide table pressures memory.
-BATCH_ROWS = int(os.environ.get("REF_SYNC_BATCH_ROWS", "1000000"))
+from ingestion.common import ref_sync_engine as engine
+from ingestion.common.catalog import get_catalog
 
 _BASE = "abfss://databricks@stdlg2commondbrickspeu2.dfs.core.windows.net/delta"
 
 
 def _t(db: str, table: str) -> dict:
-    """One reference-table entry: source Delta path -> Iceberg <db>.<table>. The target schema
-    mirrors the source database name (hive_metastore.<db>.<table> -> iceberg.<db>.<table>)."""
+    """Source Delta path -> iceberg.<db>.<table> (target schema = source database name)."""
     return {"delta_path": f"{_BASE}/{db}/{table}", "target_schema": db, "target_table": table}
 
 
-# All hive_metastore reference tables to mirror into Iceberg (from the reference-table inventory).
+# All 14 hive_metastore reference tables to mirror (see docs/reference_tables.md).
 TABLE_MAP = [
     _t("km_preparation_db",      "adscore_provided_adservers"),
     _t("km_preparation_db",      "data_provider"),
@@ -76,115 +46,7 @@ TABLE_MAP = [
     _t("productcentral",         "vx0_vx2_mattress_product_mapping"),
 ]
 
-_STORAGE = {"account_name": config.AZURE_ACCOUNT, "account_key": config.AZURE_KEY}
-
-
-# --------------------------------------------------------------- normalize ----
-def _norm_field(f: pa.Field) -> pa.Field:
-    t = f.type
-    if pa.types.is_binary(t) or pa.types.is_large_binary(t):
-        return f.with_type(pa.string())
-    if pa.types.is_timestamp(t):
-        return f.with_type(pa.timestamp(t.unit, tz="UTC"))
-    return f
-
-
-def _normalized_schema(schema: pa.Schema) -> pa.Schema:
-    return pa.schema([_norm_field(f) for f in schema])
-
-
-def _normalize_table(tbl: pa.Table) -> pa.Table:
-    cols = []
-    for i, f in enumerate(tbl.schema):
-        t = f.type
-        if pa.types.is_binary(t) or pa.types.is_large_binary(t):
-            cols.append(pa.array([None if v is None else base64.b64encode(v).decode("ascii")
-                                  for v in tbl.column(i).to_pylist()], type=pa.string()))
-        elif pa.types.is_timestamp(t):
-            # Store as UTC-aware (Iceberg timestamptz), matching Databricks TIMESTAMP. A tz-aware
-            # source keeps its instant (relabelled/converted to UTC); a naive source (e.g. INT96-
-            # coerced) is treated as UTC wall-clock — no shift.
-            cols.append(tbl.column(i).cast(pa.timestamp(t.unit, tz="UTC")))
-        else:
-            cols.append(tbl.column(i))
-    return pa.Table.from_arrays(cols, schema=_normalized_schema(tbl.schema))
-
-
-# --------------------------------------------------- streaming readers --------
-def _duckdb_reader(delta_path: str):
-    """Streaming RecordBatchReader over a Delta table via DuckDB (fallback for deletionVectors /
-    v2Checkpoint, which delta-rs can't read). CREATE SECRET can't take a bound param, so the
-    connection string is inlined (an Azure account key has no quotes)."""
-    con = duckdb.connect()
-    con.execute("INSTALL delta; LOAD delta; INSTALL azure; LOAD azure;")
-    # DuckDB's DEFAULT Azure transport is the Azure C++ SDK, which sets its own CA path and ignores
-    # SSL_CERT_FILE/CURL_CA_BUNDLE — hence the 'SSL CA cert' failure to blob storage. Switch to
-    # DuckDB's own libcurl transport, which honors ca_cert_file / the system CA bundle.
-    for stmt in ("SET azure_transport_option_type='curl'",
-                 "SET ca_cert_file='/etc/ssl/certs/ca-certificates.crt'"):
-        try:
-            con.execute(stmt)
-        except Exception as e:
-            print(f"  (duckdb setting skipped: {stmt} -> {type(e).__name__}: {e})")
-    conn_str = (f"DefaultEndpointsProtocol=https;AccountName={config.AZURE_ACCOUNT};"
-                f"AccountKey={config.AZURE_KEY};EndpointSuffix=core.windows.net")
-    con.execute(f"CREATE OR REPLACE SECRET az_ref (TYPE azure, CONNECTION_STRING '{conn_str}')")
-    return con.execute(f"SELECT * FROM delta_scan('{delta_path}')").fetch_record_batch(BATCH_ROWS)
-
-
-def _reader(delta_path: str, source: str):
-    """Return (raw_schema, iterable[RecordBatch]) for the chosen reader, streaming."""
-    if source == "delta-rs":
-        # Coerce INT96 (legacy Spark) timestamps straight to us so there's no lossy ns->us cast.
-        dataset = DeltaTable(delta_path, storage_options=_STORAGE).to_pyarrow_dataset(
-            parquet_read_options=pads.ParquetReadOptions(coerce_int96_timestamp_unit="us"))
-        return dataset.schema, dataset.scanner(batch_size=BATCH_ROWS).to_batches()
-    rbr = _duckdb_reader(delta_path)
-    return rbr.schema, rbr
-
-
-# ------------------------------------------------------------- load one --------
-def _load(catalog, entry: dict, source: str) -> int:
-    schema_name, table_name = entry["target_schema"], entry["target_table"]
-    full = f"{schema_name}.{table_name}"
-    raw_schema, batches = _reader(entry["delta_path"], source)
-    norm_schema = _normalized_schema(raw_schema)
-
-    catalog.create_namespace_if_not_exists(schema_name)
-    ice_schema = assign_fresh_schema_ids(visit_pyarrow(norm_schema, _ConvertToIcebergWithoutIDs()))
-    tbl = force_pyarrow_io(catalog.create_table_if_not_exists(full, schema=ice_schema))
-
-    # Auto-evolve: add any NEW source columns to the existing table (additive only). Type changes /
-    # removed columns are NOT reconciled here and will fail on append below (fail loudly, by design).
-    have = {f.name for f in tbl.schema().as_arrow()}
-    new = [f.name for f in norm_schema if f.name not in have]
-    if new:
-        print(f"  {full}: schema drift — adding columns {new}")
-        with tbl.update_schema() as u:
-            u.union_by_name(norm_schema)
-        tbl = force_pyarrow_io(catalog.load_table(full))
-
-    # Clean reload, streamed and atomic: clear all rows, then append batch-by-batch; the whole thing
-    # commits as one snapshot, so the table keeps its prior data until this fully succeeds.
-    rows = 0
-    with tbl.transaction() as txn:
-        txn.delete(delete_filter=AlwaysTrue())
-        for rb in batches:
-            batch_tbl = _normalize_table(pa.Table.from_batches([rb]))
-            txn.append(batch_tbl)
-            rows += batch_tbl.num_rows
-    print(f"  {full}: reloaded {rows:,} rows (via {source})")
-    return rows
-
-
-def sync_one(catalog, entry: dict) -> int:
-    """Load one table; try delta-rs, fall back to DuckDB. Both attempts are transactional, so a
-    failed delta-rs attempt commits nothing and DuckDB retries from a clean slate."""
-    try:
-        return _load(catalog, entry, "delta-rs")
-    except Exception as e:
-        print(f"  {entry['target_table']}: delta-rs failed ({type(e).__name__}: {e}); retrying via DuckDB…")
-        return _load(catalog, entry, "duckdb")
+STORAGE = {"account_name": config.AZURE_ACCOUNT, "account_key": config.AZURE_KEY}
 
 
 def main():
@@ -195,16 +57,7 @@ def main():
     if not entries:
         print(f"No TABLE_MAP entry named {args.table!r}.")
         sys.exit(1)
-
-    catalog = get_catalog()
-    print(f"Reference sync — {len(entries)} table(s), batch={BATCH_ROWS:,} rows")
-    done = 0
-    for e in entries:
-        # STOP at the first failure: no try/except here, so an unrecoverable table aborts the run
-        # (and the already-loaded tables keep their fresh data — each commit is independent).
-        sync_one(catalog, e)
-        done += 1
-    print(f"Done — {done}/{len(entries)} table(s) reloaded.")
+    engine.run(get_catalog(), entries, STORAGE)
 
 
 if __name__ == "__main__":

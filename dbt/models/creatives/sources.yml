@@ -1,0 +1,18 @@
+version: 2
+sources:
+  # Prod Postgres `creatives` schema, read through the Trino `postgresql` catalog
+  # (infra/trino/catalog/postgres.properties). This is the READ side for the Piece 4 sync-back
+  # (creatives.creative -> iceberg.gold.creative, timestamp-watermarked).
+  #
+  # WRITES (Piece 3) do NOT go through these — new CTV creatives are pushed to CLONE tables via
+  # psycopg2 cloned stored procs (creatives.sp_dbx_*), owned by the DBA/team. Column schemas are
+  # resolved at query time from the live catalog, so they are intentionally not declared here.
+  - name: creatives
+    database: postgres          # Trino catalog name (not Iceberg)
+    schema: creatives
+    tables:
+      - name: creative
+      - name: creative_first_seen
+      - name: creative_dedupe_map
+      - name: component_coding
+      - name: creative_classification_engine_holding

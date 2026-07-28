@@ -74,6 +74,10 @@ services:
       NESSIE_ICEBERG_URI: ${NESSIE_ICEBERG_URI}
       AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME}
       AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY}
+      # Unity Catalog reference sync (uc_reference_sync.py) — second storage account (base path is
+      # hardcoded in the .py). UC_AZURE_STORAGE_ACCOUNT_NAME must match the account in that path.
+      UC_AZURE_STORAGE_ACCOUNT_NAME: ${UC_AZURE_STORAGE_ACCOUNT_NAME:-}
+      UC_AZURE_STORAGE_ACCOUNT_KEY: ${UC_AZURE_STORAGE_ACCOUNT_KEY:-}
       # Point the TLS stack (OpenSSL + libcurl) at the system CA bundle so DuckDB's Azure client can
       # verify TLS to blob storage. Needed for Delta tables with deletionVectors / v2Checkpoint,
       # which delta-rs can't read and only DuckDB can. ca-certificates is installed in the image.

@@ -31,3 +31,19 @@ sources:
       - name: productmap
       - name: vx0_vx2_advertiser_mapping
       - name: vx0_vx2_mattress_product_mapping
+
+  # Additional reference dims used by Pieces 3-5 (creative dedupe + market mapping). These are
+  # UNITY CATALOG tables in a DIFFERENT Azure blob — NOT the hive_metastore common /delta path the
+  # 14 above are synced from. They will be loaded by a SEPARATE UC reference sync (a new
+  # ingestion/uc_reference_sync.py), pending UC storage credentials. Declared here so Piece 3-5
+  # source() refs resolve; the tables must be synced (and their DDL created) before a real run.
+  # This list will also grow with the CTV-out-of-scope UC reference tables (created via DDL + loaded
+  # by the same UC sync).
+  - name: reference
+    database: iceberg
+    schema: reference
+    tables:
+      - name: creative_match_type
+      - name: global_market
+      - name: provider_global_market_map
+      - name: media

@@ -80,6 +80,28 @@ binary); timestamps → UTC **with time zone** (Iceberg `timestamptz`), matching
 from the normalized Arrow schema per run; additive source changes auto-evolve, type/removed-column
 changes fail loudly, and the run stops at the first failing table.
 
+The engine lives in `ingestion/common/ref_sync_engine.py`; `reference_sync.py` (hive) and
+`uc_reference_sync.py` (Unity Catalog) are thin configs over it — identical behaviour, differing only
+in source storage account + base path + table map.
+
+### 3b. Unity Catalog reference sync (uc_reference_sync.py)
+Mirrors the UC reference tables (in a **different Azure blob** — `vxxdbwcommonpesteu2`, base path
+hardcoded in the `.py` as `abfss://dbwcontainer@vxxdbwcommonpesteu2.dfs.core.windows.net/deltas/mrdpp`)
+into `iceberg.<schema>.*` using the same engine. Only the account credentials go in `.env`:
+```bash
+# .env  (UC blob — second storage account; NAME must match the account in the .py base path)
+UC_AZURE_STORAGE_ACCOUNT_NAME=vxxdbwcommonpesteu2
+UC_AZURE_STORAGE_ACCOUNT_KEY=<REDACTED>
+```
+```bash
+docker compose up -d --force-recreate ingestion        # pick up the UC_* env
+docker compose exec ingestion python -m ingestion.uc_reference_sync                     # all UC tables
+docker compose exec ingestion python -m ingestion.uc_reference_sync --table creative_match_type
+```
+In-scope tables (creative dedupe + market mapping): `creative_match_type`, `global_market`,
+`provider_global_market_map`. Add the CTV-out-of-scope UC reference tables to its `TABLE_MAP` (each
+also gets a DDL structure + a dbt source) once identified.
+
 ## 4. Validate-at-stand-up items (configs here are starting points)
 - **Nessie S3 / warehouse property names** for the pinned `NESSIE_VERSION` (Iceberg REST catalog).
   RESOLVED for 0.104.1: Nessie's catalog S3 uses STATIC auth via a secret URN
