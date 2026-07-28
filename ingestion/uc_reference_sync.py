@@ -35,12 +35,18 @@ def _t(db: str, table: str) -> dict:
 # Unity Catalog reference tables to mirror into Iceberg.
 # In scope for CTV Pieces 3-5 (creative dedupe + market mapping):
 TABLE_MAP = [
+    # reference dims (creative dedupe + market mapping)
     _t("reference", "creative_match_type"),
     _t("reference", "global_market"),
     _t("reference", "provider_global_market_map"),
     _t("reference", "media"),
-    # CTV-out-of-scope UC reference tables: add their _t("<schema>", "<table>") entries here as they
-    # are identified (each also gets a DDL structure + a dbt source). Same engine loads them all.
+    # spend averages — read by Piece 5 (raw->gold occurrence) to assign prelim_spend/impressions
+    _t("spend", "digital_dmi_prelim_spend_average_by_media"),
+    _t("spend", "digital_dmi_prelim_spend_average_by_property"),
+    # vx2 taxonomy dims — advertiser/product masters used by the creative component/translation flow
+    _t("vx2_taxonomy", "d_advertiser"),
+    _t("vx2_taxonomy", "d_product"),
+    # Add further UC reference/lookup tables here as pieces need them (all on the same UC blob).
 ]
 
 STORAGE = {"account_name": config.UC_AZURE_ACCOUNT, "account_key": config.UC_AZURE_KEY}
