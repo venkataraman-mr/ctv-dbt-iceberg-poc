@@ -65,8 +65,8 @@
 
 with
 
-{#- ===== get_new_raw_occurrence_data_cdf ============================================================ -#}
-{#- engine adaptation: choose the table_changes source (first-run full read / no-change / incremental) -#}
+-- ===== get_new_raw_occurrence_data_cdf =====
+-- engine adaptation: choose the table_changes source (first-run full read / no-change / incremental)
 cdf_source as (
 {%- if wm.start_version is none %}
     select * from {{ raw_rel }}{% if wm.end_version is not none %} for version as of {{ wm.end_version }}{% endif %}

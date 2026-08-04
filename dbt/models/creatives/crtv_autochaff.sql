@@ -36,7 +36,7 @@
 
 with
 
-{#- get_all_ad_sizes -> vw_standard_ad_size -#}
+-- get_all_ad_sizes -> vw_standard_ad_size
 vw_standard_ad_size as (
     with cte_ad_size as (
         select distinct size_id,
