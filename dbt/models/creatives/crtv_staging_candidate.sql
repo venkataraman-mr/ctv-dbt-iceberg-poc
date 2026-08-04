@@ -103,7 +103,7 @@ tmp_digital_raw_occurrence as (
     select occ.*
     from cte_occ_filter_duplicates occ
     left join {{ source('bronze', 'creative_unique_urls') }} cuu
-           on occ.creative_url_hash = cuu.creative_url_hash and cuu.is_staged is true
+           on occ.creative_url_hash = cuu.creative_url_hash and cuu.is_staged = true
     left join {{ source('bronze', 'creative_autochaff') }} cac
            on occ.creative_url_hash = cac.creative_url_hash
     where cuu.creative_url_hash is null
