@@ -27,18 +27,28 @@
   {{ return("call postgres.system.execute(query => '" ~ doubled ~ "')") }}
 {% endmacro %}
 
-{#- Reserve n contiguous creative ids; return the block start (min). nextval() runs in Postgres via
-    the system.query passthrough; increment 1 + cache 1 makes the block contiguous, and Job A is
-    single-threaded (every 20 min) so there is no concurrent reservation. -#}
+{#- Reserve n contiguous creative ids; return the block START (min) — the analog of the Universal
+    Creative ID API returning a [min, max] block.
+
+    Two Trino calls, because Trino can't both write and return in one: (1) RESERVE via system.execute
+    (writable) -> the Postgres procedure sp_reserve_creative_ids_ctv_poc(n) atomically pops n values
+    off the sequence and records the block into tempwork.creative_id_block_ctv_poc; (2) READ the newest
+    block row via system.query (read-only). Job A is single-threaded (every 20 min), so "newest block"
+    is unambiguously this run's. The final model assigns creative_id = block_start + row_number()-1
+    over the new creatives (block_end is recorded for audit / a sanity check that end = start+n-1). -#}
 {% macro reserve_creative_ids(n) %}
   {% if not execute %}{{ return(0) }}{% endif %}
   {% set cnt = (n | int) if n is not none else 0 %}
   {% if cnt <= 0 %}{{ return(0) }}{% endif %}
-  {% set q %}
-    select min(id) as base
-    from table(postgres.system.query(query =>
-      'select nextval(''tempwork.creative_id_seq_ctv_poc'')::bigint as id from generate_series(1, {{ cnt }})'))
+  {% set do_reserve %}
+    call postgres.system.execute(query => 'call tempwork.sp_reserve_creative_ids_ctv_poc({{ cnt }})')
   {% endset %}
-  {% set base = run_query(q).rows[0]['base'] %}
+  {% do run_query(do_reserve) %}
+  {% set read_q %}
+    select block_start
+    from table(postgres.system.query(query =>
+      'select block_start from tempwork.creative_id_block_ctv_poc order by block_id desc limit 1'))
+  {% endset %}
+  {% set base = run_query(read_q).rows[0]['block_start'] | int %}
   {{ return(base) }}
 {% endmacro %}

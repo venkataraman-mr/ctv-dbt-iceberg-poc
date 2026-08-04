@@ -36,6 +36,41 @@ CREATE SEQUENCE IF NOT EXISTS tempwork.creative_id_seq_ctv_poc
     NO CYCLE;
 
 -- ---------------------------------------------------------------------------------------
+-- Creative-id block reservation (stands in for the Universal Creative ID API, which returned a
+-- [min, max] block). sp_reserve_creative_ids_ctv_poc(n) atomically pops n values off the sequence
+-- and records the reserved block; dbt reads the newest block row back (Trino's writable system.execute
+-- can't return rows, and its row-returning system.query is read-only, so the block table is the
+-- "API response log" the reader picks up). One row per Job A run.
+-- ---------------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tempwork.creative_id_block_ctv_poc (
+    block_id     bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    reserved_at  timestamptz NOT NULL DEFAULT clock_timestamp(),
+    n            integer     NOT NULL,
+    block_start  bigint      NOT NULL,
+    block_end    bigint      NOT NULL
+);
+
+CREATE OR REPLACE PROCEDURE tempwork.sp_reserve_creative_ids_ctv_poc(IN p_n integer)
+ LANGUAGE plpgsql
+AS $procedure$
+DECLARE
+    v_start bigint;
+    v_end   bigint;
+BEGIN
+    IF p_n IS NULL OR p_n <= 0 THEN
+        RETURN;
+    END IF;
+    -- pop n contiguous values off the sequence; capture the block bounds
+    SELECT min(v), max(v) INTO v_start, v_end
+    FROM (SELECT nextval('tempwork.creative_id_seq_ctv_poc') AS v
+          FROM generate_series(1, p_n)) s;
+    INSERT INTO tempwork.creative_id_block_ctv_poc (n, block_start, block_end)
+    VALUES (p_n, v_start, v_end);
+END;
+$procedure$
+;
+
+-- ---------------------------------------------------------------------------------------
 -- Clone: creative_staging  (columns verbatim; PK + unique(creative_url_hash) only, no triggers).
 -- The unique(creative_url_hash) is REQUIRED for the proc's ON CONFLICT (creative_url_hash).
 -- ---------------------------------------------------------------------------------------
