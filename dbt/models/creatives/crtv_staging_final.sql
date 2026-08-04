@@ -31,6 +31,10 @@
 {%- set dp = source('km_preparation_db', 'data_provider') -%}
 {%- set tmp_pg = 'tempwork.tmp_digital_raw_occ_to_crtv_staging_ctv_poc' -%}
 {%- set tmp_pg_cat = 'postgres.' ~ tmp_pg -%}
+{#- self-reference for the post-hooks. NOTE: post_hook strings are built in {% set %} blocks below,
+    which render at PARSE time (before the in-file config schema='bronze' applies), so {{ this }} would
+    freeze to the default schema. Build the relation with the explicit schema instead. -#}
+{%- set self_rel = this.database ~ '.bronze.' ~ this.identifier -%}
 {%- set ts_fmt = "'%Y-%m-%d %H:%i:%s.%f'" -%}
 {%- set source_bis_ctv_code = "'AVOD BISCTV'" -%}
 {%- set source_bis_social_code = "'BISSocial'" -%}
@@ -80,7 +84,7 @@ insert into {{ uu }} (
 select
     s.creative_id, s.provider_creative_id, s.creative_url, s.creative_url_hash,
     cast(current_timestamp as timestamp(6) with time zone), false, s.media_id, dp.data_provider_id
-from {{ this }} s
+from {{ self_rel }} s
 left join (select distinct data_provider_id, data_provider_code
            from {{ dp }} where record_status_flag = {{ status_flag_active }}) dp
        on s.provider_code = dp.data_provider_code
@@ -118,14 +122,14 @@ select
     suggested_vx0_product_id,
     cast(created_timestamp as timestamp(6)) as created_timestamp,
     cast(updated_timestamp as timestamp(6)) as updated_timestamp
-from {{ this }}
+from {{ self_rel }}
 {%- endset -%}
 
 {%- set h_call = pg_call("call tempwork.sp_dbx_digital_insert_crtv_staging_first_seen_ctv_poc('" ~ tmp_pg ~ "')") -%}
 
 {%- set h_flip -%}
 update {{ uu }} set is_staged = true
-where creative_url_hash in (select creative_url_hash from {{ this }})
+where creative_url_hash in (select creative_url_hash from {{ self_rel }})
   and is_staged = false
 {%- endset -%}
 
