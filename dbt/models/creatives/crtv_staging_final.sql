@@ -31,10 +31,18 @@
 {%- set dp = source('km_preparation_db', 'data_provider') -%}
 {%- set tmp_pg = 'tempwork.tmp_digital_raw_occ_to_crtv_staging_ctv_poc' -%}
 {%- set tmp_pg_cat = 'postgres.' ~ tmp_pg -%}
-{#- self-reference for the post-hooks. NOTE: post_hook strings are built in {% set %} blocks below,
-    which render at PARSE time (before the in-file config schema='bronze' applies), so {{ this }} would
-    freeze to the default schema. Build the relation with the explicit schema instead. -#}
-{%- set self_rel = this.database ~ '.bronze.' ~ this.identifier -%}
+{#- Relations used inside post_hooks MUST be plain literal strings, not source()/ref() Relation
+    objects. post_hook strings are captured at parse and re-rendered at run; a Relation embedded via
+    {% set %} degrades to the model's own relation (iceberg.silver.<model>) on that re-render, while a
+    plain string survives intact. (self_rel is built from the stable this.database/this.identifier +
+    the explicit 'bronze' schema, since this.schema would be the parse-time default 'silver'.)
+    Ordering to crtv_autochaff_records — only referenced in a hook — is preserved via depends_on below. -#}
+{%- set self_rel             = this.database ~ '.bronze.' ~ this.identifier -%}
+{%- set rel_uu               = 'iceberg.bronze.creative_unique_urls' -%}
+{%- set rel_autochaff        = 'iceberg.bronze.creative_autochaff' -%}
+{%- set rel_autochaff_recs   = 'iceberg.bronze.crtv_autochaff_records' -%}
+{%- set rel_data_provider    = 'iceberg.km_preparation_db.data_provider' -%}
+-- depends_on: {{ ref('crtv_autochaff_records') }}
 {%- set ts_fmt = "'%Y-%m-%d %H:%i:%s.%f'" -%}
 {%- set source_bis_ctv_code = "'AVOD BISCTV'" -%}
 {%- set source_bis_social_code = "'BISSocial'" -%}
@@ -59,7 +67,7 @@
 
 {#- ---- POST-HOOKS (built as strings; ordered) --------------------------------------------------- -#}
 {%- set h_autochaff -%}
-insert into {{ autochaff_tbl }} (
+insert into {{ rel_autochaff }} (
     creative_id, legacy_creative_id, country_iso_2_code, provider_code, source_channel,
     provider_creative_id, capture_month, capture_timestamp, creative_type, mime_type_id, media_id,
     media_property_id, publisher_domain, creative_width, creative_height, creative_duration,
@@ -73,12 +81,12 @@ select
     src.creative_url, src.creative_url_hash, src.creative_machine_learning_payload, src.creative_url_override,
     src.creative_payload, src.record_status, src.first_seen_metadata, src.suggested_vx0_product_id,
     src.created_timestamp, src.updated_timestamp
-from {{ ref('crtv_autochaff_records') }} src
-where not exists (select 1 from {{ autochaff_tbl }} t where t.creative_url_hash = src.creative_url_hash)
+from {{ rel_autochaff_recs }} src
+where not exists (select 1 from {{ rel_autochaff }} t where t.creative_url_hash = src.creative_url_hash)
 {%- endset -%}
 
 {%- set h_uu_insert -%}
-insert into {{ uu }} (
+insert into {{ rel_uu }} (
     creative_id, provider_creative_id, provider_creative_url, creative_url_hash,
     created_timestamp, is_staged, first_seen_media_id, first_seen_provider_id)
 select
@@ -86,9 +94,9 @@ select
     cast(current_timestamp as timestamp(6) with time zone), false, s.media_id, dp.data_provider_id
 from {{ self_rel }} s
 left join (select distinct data_provider_id, data_provider_code
-           from {{ dp }} where record_status_flag = {{ status_flag_active }}) dp
+           from {{ rel_data_provider }} where record_status_flag = {{ status_flag_active }}) dp
        on s.provider_code = dp.data_provider_code
-where not exists (select 1 from {{ uu }} u where u.creative_url_hash = s.creative_url_hash)
+where not exists (select 1 from {{ rel_uu }} u where u.creative_url_hash = s.creative_url_hash)
 {%- endset -%}
 
 {%- set h_pg_drop = 'drop table if exists ' ~ tmp_pg_cat -%}
@@ -128,7 +136,7 @@ from {{ self_rel }}
 {%- set h_call = pg_call("call tempwork.sp_dbx_digital_insert_crtv_staging_first_seen_ctv_poc('" ~ tmp_pg ~ "')") -%}
 
 {%- set h_flip -%}
-update {{ uu }} set is_staged = true
+update {{ rel_uu }} set is_staged = true
 where creative_url_hash in (select creative_url_hash from {{ self_rel }})
   and is_staged = false
 {%- endset -%}
