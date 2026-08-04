@@ -41,3 +41,22 @@ WITH (
 --        current_commit_version, transaction_status, created_timestamp, updated_timestamp)
 --     VALUES ('DIGITAL_RAW_CREATIVES_TO_PSQL', current_timestamp, current_timestamp, NULL, NULL,
 --             'SUCCEEDED', current_timestamp, current_timestamp);
+
+-- ---------------------------------------------------------------------------------------------------
+-- Piece 3 watermark seeds. Run ONCE before the first Job A / Job B run (skip a row if it already
+-- exists). NULL last_commit_version / NULL timestamps => first run does the one-time full read, then
+-- the run advances the watermark.
+--   Job A = DIGITAL_RAW_OCC_TO_CRTV_STAGING            (VERSION-based; reads digital_raw_occurrence)
+--   Job B = DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE  (TIMESTAMP-based; same source)
+-- ---------------------------------------------------------------------------------------------------
+INSERT INTO iceberg.silver.watermark_control
+    (watermark_name, start_timestamp, end_timestamp, last_commit_version,
+     current_commit_version, transaction_status, created_timestamp, updated_timestamp)
+VALUES ('DIGITAL_RAW_OCC_TO_CRTV_STAGING', NULL, NULL, NULL, NULL,
+        'SUCCEEDED', current_timestamp, current_timestamp);
+
+INSERT INTO iceberg.silver.watermark_control
+    (watermark_name, start_timestamp, end_timestamp, last_commit_version,
+     current_commit_version, transaction_status, created_timestamp, updated_timestamp)
+VALUES ('DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE', NULL, NULL, NULL, NULL,
+        'SUCCEEDED', current_timestamp, current_timestamp);

@@ -98,3 +98,49 @@
      " updated_timestamp = cast(current_timestamp as timestamp(6) with time zone)" ~
      " where watermark_name = '" ~ watermark_name ~ "'") }}
 {% endmacro %}
+
+{#- Reusable timestamp -> snapshot resolver for TIMESTAMP-watermarked table_changes reads on an
+    Iceberg source. Generic (any process that keeps a timestamp watermark on an append-only Iceberg
+    table can use it); pairs with watermark_ts_begin/finish above.
+
+    A stored timestamp watermark isn't directly usable by Trino system.table_changes, which reads a
+    snapshot-id range (unlike Delta's timestamp-native table_changes). This maps the watermark:
+      start_ts is EXCLUSIVE -> start_snapshot = newest snapshot committed AT/BEFORE start_ts;
+      end_snapshot = current newest snapshot; and end_committed_at = that snapshot's exact commit
+      time, which the caller stores as the new end_timestamp (via watermark_ts_finish) so the next
+      run's `committed_at <= start_ts` lands exactly on end_snap with no wall-clock drift.
+    First run (start_ts is none) -> {start_snap: none}: caller does a one-time full read
+    `for version as of end_snap`.
+
+    HARDENING (no watermark-schema change): deterministic tie-break `order by committed_at DESC,
+    snapshot_id DESC` everywhere (snapshots sharing a millisecond never resolve arbitrarily), and the
+    watermark end stores end_snap's committed_at (not a run wall-clock time).
+
+    Returns {start_snap, end_snap, end_committed_at}. -#}
+{% macro snapshot_range_since_ts(source_relation, start_ts) %}
+  {% if not execute %}{{ return({'start_snap': none, 'end_snap': none, 'end_committed_at': none}) }}{% endif %}
+  {% set snaps = snapshots_table(source_relation) %}
+  {% if start_ts is none %}
+    {% set q %}
+      select snapshot_id as end_snap, committed_at as end_committed_at
+      from {{ snaps }}
+      order by committed_at desc, snapshot_id desc
+      limit 1
+    {% endset %}
+    {% set row = run_query(q).rows[0] %}
+    {{ return({'start_snap': none, 'end_snap': row['end_snap'], 'end_committed_at': row['end_committed_at']}) }}
+  {% else %}
+    {% set q %}
+      select
+        (select snapshot_id from {{ snaps }}
+          where committed_at <= timestamp '{{ start_ts }}'
+          order by committed_at desc, snapshot_id desc limit 1)   as start_snap,
+        (select snapshot_id from {{ snaps }}
+          order by committed_at desc, snapshot_id desc limit 1)   as end_snap,
+        (select committed_at from {{ snaps }}
+          order by committed_at desc, snapshot_id desc limit 1)   as end_committed_at
+    {% endset %}
+    {% set row = run_query(q).rows[0] %}
+    {{ return({'start_snap': row['start_snap'], 'end_snap': row['end_snap'], 'end_committed_at': row['end_committed_at']}) }}
+  {% endif %}
+{% endmacro %}
