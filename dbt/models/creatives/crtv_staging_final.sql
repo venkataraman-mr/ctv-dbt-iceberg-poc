@@ -141,14 +141,16 @@ where creative_url_hash in (select creative_url_hash from {{ self_rel }})
   and is_staged = false
 {%- endset -%}
 
-{%- set h_wm = watermark_version_finish(wm_name) -%}
-
+{#- watermark finish is passed as a RUN-TIME template string (rendered at run, execute=True), NOT a
+    {% set %} capture: watermark_version_finish returns a no-op "select 1" when execute is False, so
+    capturing it at parse would freeze the no-op. Same pattern Piece 1 uses. -#}
 {{ config(
     materialized='table',
     schema='bronze',
     tags=['creatives', 'job_a'],
     views_enabled=false,
-    post_hook=[h_autochaff, h_uu_insert, h_pg_drop, h_pg_ctas, h_call, h_flip, h_wm]
+    post_hook=[h_autochaff, h_uu_insert, h_pg_drop, h_pg_ctas, h_call, h_flip,
+               "{{ watermark_version_finish('" ~ wm_name ~ "') }}"]
 ) }}
 
 with excluded as (
