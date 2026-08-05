@@ -44,10 +44,12 @@ WITH (
 
 -- ---------------------------------------------------------------------------------------------------
 -- Piece 3 watermark seeds. Run ONCE before the first Job A / Job B run (skip a row if it already
--- exists). NULL last_commit_version / NULL timestamps => first run does the one-time full read, then
--- the run advances the watermark.
---   Job A = DIGITAL_RAW_OCC_TO_CRTV_STAGING            (VERSION-based; reads digital_raw_occurrence)
---   Job B = DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE  (TIMESTAMP-based; same source)
+-- exists). NULL last_commit_version => first run does the one-time full read, then advances the
+-- watermark. All three are VERSION-based (Job B was consolidated onto version watermarks — the
+-- timestamp macros stay for later pieces), reading bronze.digital_raw_occurrence independently.
+--   Job A            = DIGITAL_RAW_OCC_TO_CRTV_STAGING             (creative staging + first-seen seed)
+--   Job B first-seen = DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE   (first-seen earliest-occurrence update)
+--   Job B summary    = DIGITAL_RAW_OCC_SUMMARY_PSQL               (occurrence summary + park/release buffer)
 -- ---------------------------------------------------------------------------------------------------
 INSERT INTO iceberg.silver.watermark_control
     (watermark_name, start_timestamp, end_timestamp, last_commit_version,
@@ -59,4 +61,10 @@ INSERT INTO iceberg.silver.watermark_control
     (watermark_name, start_timestamp, end_timestamp, last_commit_version,
      current_commit_version, transaction_status, created_timestamp, updated_timestamp)
 VALUES ('DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE', NULL, NULL, NULL, NULL,
+        'SUCCEEDED', current_timestamp, current_timestamp);
+
+INSERT INTO iceberg.silver.watermark_control
+    (watermark_name, start_timestamp, end_timestamp, last_commit_version,
+     current_commit_version, transaction_status, created_timestamp, updated_timestamp)
+VALUES ('DIGITAL_RAW_OCC_SUMMARY_PSQL', NULL, NULL, NULL, NULL,
         'SUCCEEDED', current_timestamp, current_timestamp);

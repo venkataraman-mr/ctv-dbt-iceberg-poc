@@ -8,10 +8,13 @@
 --
 -- Objects created:
 --   tempwork.creative_id_seq_ctv_poc                                (sequence, start 26,000,000,000)
+--   tempwork.creative_id_block_ctv_poc + sp_reserve_creative_ids_ctv_poc (Job A id-block reservation)
 --   tempwork.creative_staging_ctv_poc                               (clone of creatives.creative_staging)
 --   tempwork.creative_first_seen_ctv_poc                            (clone of creatives.creative_first_seen)
+--   tempwork.creative_occurrence_summary_ctv_poc                    (clone of creatives.creative_occurrence_summary; Job B)
 --   tempwork.sp_dbx_digital_insert_crtv_staging_first_seen_ctv_poc  (Job A insert proc, retargeted)
---   tempwork.sp_dbx_digital_update_raw_occ_to_crtv_first_seen_ctv_poc (Job B update proc, retargeted)
+--   tempwork.sp_dbx_digital_update_raw_occ_to_crtv_first_seen_ctv_poc (Job B first-seen update proc, retargeted)
+--   tempwork.sp_dbx_digital_upsert_to_crtv_occ_summary_ctv_poc      (Job B occurrence-summary upsert proc, retargeted)
 --
 -- Reads (unchanged, prod, READ-ONLY): reference.data_provider  (provider_code -> provider_id).
 --
@@ -349,6 +352,120 @@ AS $procedure$
     WHERE trg.creative_url_hash = tmp.creative_url_hash
     AND trg.occurrence_timestamp > tmp.occurrence_timestamp;',p_tmp_tbl_name);
 	RAISE NOTICE 'Records updated in tempwork.creative_first_seen_ctv_poc matching names';
+END;
+$procedure$
+;
+
+-- =====================================================================================
+-- Piece 3 Job B (occurrence summary) — clone of creatives.creative_occurrence_summary + its
+-- upsert proc, retargeted to tempwork *_ctv_poc. Real creatives.* untouched. Clone starts empty.
+-- The upsert proc accumulates per-(creative,hash,country,media,market,property) occurrence_count +
+-- first_run/last_run + a 7-day count. Its internal scratch tables are retargeted into tempwork.
+-- =====================================================================================
+
+CREATE TABLE IF NOT EXISTS tempwork.creative_occurrence_summary_ctv_poc (
+    summary_row_id        bigserial   NOT NULL,
+    creative_id           int8        NOT NULL,
+    creative_url_hash     int8        NOT NULL,
+    country_iso_2_code    varchar(2)  NOT NULL,
+    media_id              int2        NOT NULL,
+    market_id             int2        NOT NULL,
+    media_property_id     int4        NOT NULL,
+    occurrence_count      int4        NOT NULL,
+    first_run             timestamp   NOT NULL,
+    last_run              timestamp   NOT NULL,
+    seven_days_occ_count  int4        DEFAULT 0 NOT NULL,
+    CONSTRAINT creative_occurrence_summary_ctv_poc_pkey PRIMARY KEY (summary_row_id),
+    CONSTRAINT creative_occurrence_summary_ctv_poc_ukey
+        UNIQUE (creative_id, creative_url_hash, media_id, market_id, media_property_id)
+);
+
+-- Body verbatim from creatives.sp_dbx_digital_upsert_to_crtv_occ_summary, retargeted.
+-- Example: CALL tempwork.sp_dbx_digital_upsert_to_crtv_occ_summary_ctv_poc('tempwork.tmp_raw_occ_for_crtv_occ_summary_ctv_poc');
+CREATE OR REPLACE PROCEDURE tempwork.sp_dbx_digital_upsert_to_crtv_occ_summary_ctv_poc(IN p_tmp_tbl_name character varying)
+ LANGUAGE plpgsql
+AS $procedure$
+BEGIN
+        DROP TABLE IF EXISTS tempwork.tmp_raw_crtv_occ_summary_local_psql_ctv_poc;
+
+        EXECUTE FORMAT ('CREATE TABLE tempwork.tmp_raw_crtv_occ_summary_local_psql_ctv_poc AS
+        SELECT
+                creative_id,
+                creative_url_hash,
+                country_iso_2_code,
+                market_id,
+                media_id,
+                media_property_id,
+                sum(occ_cnt) as occurrence_count,
+                min(min_capture_timestamp) as min_capture_timestamp,
+                max(max_capture_timestamp) as max_capture_timestamp
+        FROM %s
+        GROUP BY
+        creative_id,
+        creative_url_hash,
+        country_iso_2_code,
+        market_id,
+        media_id,
+        media_property_id', p_tmp_tbl_name);
+
+        MERGE INTO tempwork.creative_occurrence_summary_ctv_poc AS T
+        USING tempwork.tmp_raw_crtv_occ_summary_local_psql_ctv_poc as S
+        ON  T.creative_id = S.creative_id
+                AND T.creative_url_hash = S.creative_url_hash
+                AND T.country_iso_2_code = S.country_iso_2_code
+                AND T.media_id = S.media_id
+                AND T.market_id = S.market_id
+                AND coalesce(T.media_property_id,-1) = coalesce(S.media_property_id,-1)
+        WHEN MATCHED THEN UPDATE SET
+                occurrence_count = T.occurrence_count + S.occurrence_count,
+                first_run = CASE WHEN T.first_run > S.min_capture_timestamp THEN S.min_capture_timestamp else T.first_run END,
+                last_run = CASE WHEN T.last_run < S.max_capture_timestamp THEN S.max_capture_timestamp else T.last_run END
+        WHEN NOT MATCHED THEN
+                INSERT (creative_id, creative_url_hash, country_iso_2_code, media_id, market_id, media_property_id,
+                        occurrence_count, first_run, last_run)
+                VALUES (S.creative_id, S.creative_url_hash, S.country_iso_2_code, S.media_id,
+                        S.market_id, S.media_property_id, S.occurrence_count, S.min_capture_timestamp, S.max_capture_timestamp);
+
+        --==================================Populate seven days occurrence summary================================--
+
+        DROP TABLE IF EXISTS tempwork.tmp_seven_days_raw_crtv_occ_summary_local_psql_ctv_poc;
+
+        EXECUTE FORMAT ('CREATE TABLE tempwork.tmp_seven_days_raw_crtv_occ_summary_local_psql_ctv_poc AS
+        SELECT
+                source.creative_id,
+                source.creative_url_hash,
+                source.country_iso_2_code,
+                source.market_id,
+                source.media_id,
+                source.media_property_id,
+                sum(occ_cnt) as occurrence_count
+        FROM %s source
+        INNER JOIN tempwork.creative_occurrence_summary_ctv_poc occ_summary
+        ON source.creative_id = occ_summary.creative_id
+                AND source.creative_url_hash = occ_summary.creative_url_hash
+                AND source.country_iso_2_code = occ_summary.country_iso_2_code
+                AND source.media_id = occ_summary.media_id
+                AND source.market_id = occ_summary.market_id
+                AND coalesce(source.media_property_id,-1) = coalesce(occ_summary.media_property_id,-1)
+        WHERE source.capture_date::date - occ_summary.first_run::date < 7
+        GROUP BY
+        source.creative_id,
+        source.creative_url_hash,
+        source.country_iso_2_code,
+        source.market_id,
+        source.media_id,
+        source.media_property_id', p_tmp_tbl_name);
+
+        MERGE INTO tempwork.creative_occurrence_summary_ctv_poc AS T
+        USING tempwork.tmp_seven_days_raw_crtv_occ_summary_local_psql_ctv_poc as S
+        ON  T.creative_id = S.creative_id
+                AND T.creative_url_hash = S.creative_url_hash
+                AND T.country_iso_2_code = S.country_iso_2_code
+                AND T.media_id = S.media_id
+                AND T.market_id = S.market_id
+                AND coalesce(T.media_property_id,-1) = coalesce(S.media_property_id,-1)
+        WHEN MATCHED THEN UPDATE SET
+        seven_days_occ_count = T.seven_days_occ_count + S.occurrence_count;
 END;
 $procedure$
 ;

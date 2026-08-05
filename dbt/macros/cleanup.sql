@@ -1,34 +1,34 @@
 {#
   Job-scratch cleanup (Nessie has no views, so dbt intermediate models are TABLES — the analog of the
-  Databricks jobwork temp tables that the legacy code DROPs at end of run). This on-run-end hook drops
-  every successfully-built model tagged 'job_a' — but ONLY when the terminal model crtv_staging_final
-  succeeded, so a FAILED run leaves the intermediates in place for debugging (which is exactly when you
-  want them). Opt out with `--vars 'keep_job_a_tables: true'` to inspect them after a good run.
+  Databricks jobwork temp tables the legacy code DROPs at end of run). This on-run-end hook drops every
+  model carrying `tag`, but ONLY if NO model with that tag failed/was skipped this run — so a FAILED run
+  leaves all of that tag's scratch in place for debugging (exactly when you want it). Works for a job
+  with multiple terminals (e.g. Job B = first-seen + occurrence summary). Opt out per tag with
+  `--vars 'keep_<tag>_tables: true'` (e.g. keep_job_a_tables / keep_job_b_tables).
 
-  Persistent tables are NOT touched: creative_unique_urls / creative_autochaff (bronze registries) and
-  silver.watermark_control are pre-DDL'd and not dbt models, so they never match the tag filter.
+  Persistent tables are NOT touched: creative_unique_urls / creative_autochaff /
+  missing_digital_occurrence_for_summary (bronze) and silver.watermark_control are pre-DDL'd, not dbt
+  models, so they never carry the tag.
 
-  Wire-up (dbt_project.yml):  on-run-end: ["{{ cleanup_tagged_models(results, 'job_a', 'crtv_staging_final') }}"]
+  Wire-up (dbt_project.yml on-run-end): "{{ cleanup_tagged_models(results, 'job_a') }}" etc.
 #}
-{% macro cleanup_tagged_models(results, tag, gate_model) %}
+{% macro cleanup_tagged_models(results, tag) %}
   {% if not execute %}{{ return('') }}{% endif %}
-  {% if var('keep_job_a_tables', false) %}
-    {{ log('Job A cleanup: skipped (keep_job_a_tables=true)', info=true) }}
+  {% if var('keep_' ~ tag ~ '_tables', false) %}
+    {{ log(tag ~ ' cleanup: skipped (keep_' ~ tag ~ '_tables=true)', info=true) }}
     {{ return('') }}
   {% endif %}
 
-  {#- only clean up if the gate model (the terminal push model) succeeded this run.
-      NOTE: use a namespace — a plain {% set %} inside a {% for %} is loop-scoped and won't escape. -#}
-  {% set ns = namespace(gate_ok=false, dropped=0) %}
+  {#- gate: only clean up if at least one tagged model ran and NONE failed. (namespace — a plain
+      {% set %} inside a {% for %} is loop-scoped and won't escape.) -#}
+  {% set ns = namespace(any=false, bad=false, dropped=0) %}
   {% for r in results %}
-    {% if r.node.resource_type == 'model' and r.node.name == gate_model and (r.status | string) == 'success' %}
-      {% set ns.gate_ok = true %}
+    {% if r.node.resource_type == 'model' and tag in (r.node.config.tags or []) %}
+      {% set ns.any = true %}
+      {% if (r.status | string) != 'success' %}{% set ns.bad = true %}{% endif %}
     {% endif %}
   {% endfor %}
-  {% if not ns.gate_ok %}
-    {{ log('Job A cleanup: skipped (gate model ' ~ gate_model ~ ' did not succeed this run)', info=true) }}
-    {{ return('') }}
-  {% endif %}
+  {% if not ns.any or ns.bad %}{{ return('') }}{% endif %}
 
   {% for r in results %}
     {% set n = r.node %}
@@ -36,8 +36,8 @@
       {% set rel = n.database ~ '.' ~ n.schema ~ '.' ~ n.identifier %}
       {% do run_query('drop table if exists ' ~ rel) %}
       {% set ns.dropped = ns.dropped + 1 %}
-      {{ log('Job A cleanup: dropped ' ~ rel, info=true) }}
+      {{ log(tag ~ ' cleanup: dropped ' ~ rel, info=true) }}
     {% endif %}
   {% endfor %}
-  {{ log('Job A cleanup: dropped ' ~ ns.dropped ~ ' scratch table(s) tagged ' ~ tag, info=true) }}
+  {{ log(tag ~ ' cleanup: dropped ' ~ ns.dropped ~ ' scratch table(s)', info=true) }}
 {% endmacro %}

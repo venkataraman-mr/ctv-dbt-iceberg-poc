@@ -53,6 +53,11 @@ WITH (
     sorted_by = ARRAY['creative_url_hash']
 );
 
+-- Piece 3 Job B (occurrence summary) park/release buffer. capture_timestamp added for the summary
+-- flow (Databricks MRVXVC-11059 "use capture timestamp column" for first_run/last_run); it must exist
+-- for the UNION with the CDF read and the first_run/last_run population. On an already-created table,
+-- run:  ALTER TABLE iceberg.bronze.missing_digital_occurrence_for_summary
+--         ADD COLUMN capture_timestamp TIMESTAMP(6) WITH TIME ZONE;
 CREATE TABLE IF NOT EXISTS iceberg.bronze.missing_digital_occurrence_for_summary (
     provider_occurrence_id                 VARCHAR,
     creative_url_hash                      BIGINT,
@@ -61,7 +66,8 @@ CREATE TABLE IF NOT EXISTS iceberg.bronze.missing_digital_occurrence_for_summary
     source_channel                         VARCHAR,
     provider_dma_city_name                 VARCHAR,
     publisher_id                           BIGINT,
-    capture_date                           DATE
+    capture_date                           DATE,
+    capture_timestamp                      TIMESTAMP(6) WITH TIME ZONE
 )
 WITH (
     format = 'PARQUET'

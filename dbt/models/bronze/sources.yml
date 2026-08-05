@@ -12,6 +12,7 @@ sources:
       # (legacy autochaff scoring only runs for provider_code='BIS'; CTV is 'AVOD BISCTV').
       - name: creative_unique_urls                  # url->creative_id registry + is_staged flag
       - name: creative_autochaff                    # known auto-chaff hashes (empty for CTV)
+      - name: missing_digital_occurrence_for_summary # Job B occ-summary park/release buffer (needs capture_timestamp col)
 
       - name: digtial_raw_occurrence_ctv_staging   # CTV bz2/json staging landing (append-only)
         description: >
