@@ -75,6 +75,21 @@ next run reprocesses. Idempotency: Iceberg anti-joins + the proc's `ON CONFLICT 
 NOTHING` + the proc running as one Postgres transaction. Matches legacy behavior (duplication/id-burn on
 retry is acceptable, as in Databricks).
 
+## Scratch cleanup (jobwork analog)
+
+The five dbt models are materialized as **tables** (Nessie has no views), so they're the analog of the
+Databricks `jobwork` temp tables — refreshed every run. They're dropped at the end of a **successful**
+run by an `on-run-end` hook (`dbt_project.yml` → `cleanup_tagged_models(results, 'job_a',
+'crtv_staging_final')`, in `macros/cleanup.sql`): it drops every model tagged `job_a` (all five) but
+only when `crtv_staging_final` succeeded — a **failed** run keeps them for debugging. Opt out with
+`--vars 'keep_job_a_tables: true'` to inspect the combined push record after a good run. The persistent
+tables (`creative_unique_urls`, `creative_autochaff`, `silver.watermark_control`) aren't `job_a` models,
+so they're never touched. (Gotcha found here: a Jinja `{% set %}` inside a `{% for %}` is loop-scoped —
+the gate flag must live on a `namespace()` to escape the loop.)
+
+After a clean run the intermediates are gone, so verify results from the persistent outputs
+(`postgres.tempwork.*`, `creative_unique_urls`, the watermark), not `crtv_staging_final`.
+
 ## Macros
 
 - `macros/crtv_push.sql` — `pg_call(inner_sql)` (tunnels a `CALL`/DML via `system.execute`);
