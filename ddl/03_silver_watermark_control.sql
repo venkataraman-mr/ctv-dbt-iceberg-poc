@@ -14,12 +14,15 @@
 -- USED by Piece 1: digital_raw_occurrence reads new staging inserts via system.table_changes driven
 -- by the version watermark 'BIS_CTV_US_INGESTION_STG_TO_RAW_OCC'. Seed that row (last_commit_version
 -- = NULL) before the first run so the initial full load runs and then advances the watermark.
--- max_commit_retry: this single shared control table is written by every watermarked flow (Piece 1,
--- Job A, and BOTH Job B sub-pipelines), so concurrent commits collide under Iceberg optimistic
--- concurrency (it's one tiny data file). Trino's default is 4 retries — too few when two writers race
--- (seen as ICEBERG_COMMIT_ERROR "Found conflicting files"). Raise it so a conflicting commit retries
--- against the new snapshot instead of failing. On an already-created table, run:
---   ALTER TABLE iceberg.silver.watermark_control SET PROPERTIES max_commit_retry = 20;
+-- CONCURRENCY: this single shared control table is written by every watermarked flow (Piece 1, Job A,
+-- and BOTH Job B sub-pipelines), so concurrent commits collide under Iceberg optimistic concurrency —
+-- as one unpartitioned tiny table it is ONE data file, so any two writers rewrite the same file (seen
+-- as ICEBERG_COMMIT_ERROR "Found conflicting files"). This is a serializable-isolation row-conflict,
+-- which Trino does NOT retry (max_commit_retry doesn't help). Fix: PARTITION BY watermark_name — each
+-- process's row is its own partition = its own data file, so different processes rewrite different
+-- files and Iceberg's conflict check prunes non-matching partitions. max_commit_retry=20 stays as
+-- belt-and-suspenders (e.g. same-partition edge cases). On an already-created table this needs a
+-- recreate (partition spec can't be retrofitted onto existing files) — see ddl/README / the runbook.
 CREATE TABLE IF NOT EXISTS iceberg.silver.watermark_control (
     watermark_name          VARCHAR,
     start_timestamp         TIMESTAMP(6) WITH TIME ZONE,
@@ -32,6 +35,7 @@ CREATE TABLE IF NOT EXISTS iceberg.silver.watermark_control (
 )
 WITH (
     format = 'PARQUET',
+    partitioning = ARRAY['watermark_name'],
     max_commit_retry = 20
 );
 
