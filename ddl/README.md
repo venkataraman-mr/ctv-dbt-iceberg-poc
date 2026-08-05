@@ -22,6 +22,14 @@ by the Spark→Trino mapping in each file's header (STRING→VARCHAR, TIMESTAMP�
 VARIANT→VARCHAR, IDENTITY/DEFAULT dropped since `occurrence_id`/`creative_id` come from Postgres
 sequences, CLUSTER BY→partitioning/sorted_by). They pre-create the structures the Piece 3–5 models write into.
 
+**Postgres side (Piece 3):** `ddl/postgres/piece3_tempwork_ctv_poc.sql` (run once on prod Postgres via
+`psql`, not Trino) creates the creative-push **clone** objects in the `tempwork` schema with a
+`_ctv_poc` suffix — clone tables (`creative_staging_ctv_poc`, `creative_first_seen_ctv_poc`), the two
+cloned stored procs, the `creative_id_seq_ctv_poc` sequence, and the id-block table + reservation proc.
+Real `creatives.*` are untouched. See `docs/ctv_creative_push.md`. Watermark **seed rows** for Piece 3
+Job A/B (`DIGITAL_RAW_OCC_TO_CRTV_STAGING` version, `DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE` timestamp)
+are in `ddl/03` — run once before the first Job A/B run.
+
 The **14 reference tables** (`km_preparation_db.*`, `km_preparation_gold_db.*`, `productcentral.*`) are
 provisioned by the Option C reference sync (`ingestion/reference_sync.py`) — see `docs/reference_tables.md`.
 Three more reference dims used by Pieces 3–5 (`reference.creative_match_type`, `global_market`,

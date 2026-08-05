@@ -137,6 +137,32 @@ generated from the Databricks `table_ddl` notebooks (Spark→Trino types; IDENTI
 `vx2_taxonomy.*` — provisional). Coverage audited vs the deep-dive; archiving excluded (N/A for CTV).
 Run/verify: see **`ddl/README.md`**.
 
+## 4d. Piece 3 — creative push, Job A — VALIDATED (2026-08-04)
+New CTV creatives push end-to-end from `bronze.digital_raw_occurrence` into Postgres, **Trino/dbt-native
+(no Python)**. dbt DAG (all bronze tables): `crtv_staging_candidate → crtv_autochaff →
+crtv_autochaff_records → crtv_staging_excluded → crtv_staging_final`; the push runs in the final model's
+ordered post-hooks (maintain `creative_unique_urls`/`creative_autochaff` → cross-catalog CTAS a Postgres
+temp table → `CALL` the cloned insert proc via `postgres.system.execute` → advance the **version**
+watermark last). `creative_id` = a Postgres sequence reserved as a `[start,end]` block (replaces the
+Universal Creative API). All Postgres objects are `tempwork.*_ctv_poc` **clones** — real `creatives.*`
+untouched. Full detail + build learnings: **`docs/ctv_creative_push.md`**.
+
+Setup (once): run the Postgres clone bootstrap, then seed the Job A watermark row:
+```bash
+# Postgres (psql): ddl/postgres/piece3_tempwork_ctv_poc.sql  (idempotent; clones + procs + sequence + block table)
+# Trino: seed DIGITAL_RAW_OCC_TO_CRTV_STAGING (ddl/03 — version watermark, last_commit_version NULL)
+docker exec -i trino trino --execute "INSERT INTO iceberg.silver.watermark_control (watermark_name, start_timestamp, end_timestamp, last_commit_version, current_commit_version, transaction_status, created_timestamp, updated_timestamp) VALUES ('DIGITAL_RAW_OCC_TO_CRTV_STAGING', NULL, NULL, NULL, NULL, 'SUCCEEDED', current_timestamp, current_timestamp)"
+```
+Run / verify:
+```bash
+docker compose run --rm dbt dbt run --select +crtv_staging_final
+docker exec -i trino trino --execute "SELECT count(*) FROM postgres.tempwork.creative_staging_ctv_poc"
+docker exec -i trino trino --execute "SELECT count(*) FILTER (WHERE is_staged) FROM iceberg.bronze.creative_unique_urls"
+docker exec -i trino trino --execute "SELECT last_commit_version, transaction_status FROM iceberg.silver.watermark_control WHERE watermark_name='DIGITAL_RAW_OCC_TO_CRTV_STAGING'"
+```
+First validated run: 26,592 creatives staged, `creative_first_seen` seeded 1:1, `creative_autochaff` 0,
+watermark `SUCCEEDED`. (Reset commands for a clean re-test are in `docs/ctv_creative_push.md`.)
+
 ## 5. Prod Postgres — reachability RESOLVED, Trino catalog WIRED (2026-07-26)
 Cross-cloud reachability was BLOCKED; DevOps opened the path (verified: `bash scripts/pg_connectivity_test.sh`
 → DNS ok, TCP OPEN, psql auth OK as `databricks_admin_user` @ `vxcentral`, PostgreSQL 16.4). The Trino

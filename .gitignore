@@ -20,3 +20,5 @@ dbt/logs/
 # local-only working notes (not shared)
 docs/ctv_dbt_iceberg_poc.md
 dbt/.user.yml
+# checkpoint build artifacts (house-styled docx) — do not commit
+docs/*.docx

@@ -46,7 +46,7 @@ Use a second VS Code window connected via **Remote-SSH** to the VM for *running 
 (docker/dbt/logs) — not for editing the same files, to avoid divergence between the two copies.
 
 ## Status
-**Foundation + Reference sync (hive + UC) + Postgres + CTV ingestion (Piece 1) VALIDATED; Pieces 3–5 tables provisioned.**
+**Foundation + Reference sync (hive + UC) + Postgres + CTV ingestion (Piece 1) + Piece 3 Job A (creative push) VALIDATED; Pieces 3 (Job B)–5 remaining.**
 
 *Foundation (2026-07-22):* the full stack (nessie · trino · dbt · ingestion) builds and runs on the
 EC2 VM, and the two-engine smoke test passes — Trino and PyIceberg both read/write one Iceberg table
@@ -93,7 +93,19 @@ dropped, CLUSTER BY → partition/sort). dbt sources are wired for the UC refere
 Postgres reads (`creatives.*`, `vx2_taxonomy.*` — provisional). Coverage was audited against the
 deep-dive; archiving is deliberately excluded (N/A for CTV). See `ddl/README.md`.
 
-Next up: **Piece 3 (creative push)**, then Pieces 4–5, in order. Some library upgrades are parked as a
-future action item (`docs/runbook.md` §6).
+*Piece 3 — creative push, Job A (2026-08-04):* new CTV creatives push end-to-end from
+`bronze.digital_raw_occurrence` into Postgres, **Trino/dbt-native (no Python)**. Five dbt models
+(`crtv_staging_candidate → crtv_autochaff → crtv_autochaff_records → crtv_staging_excluded →
+crtv_staging_final`) are a 1:1 transliteration of the Databricks `DigitalRawocctoCrtvStaging` SQL
+(auto-chaff path ported in full even though it's a no-op for CTV). The final model's ordered post-hooks
+maintain `bronze.creative_unique_urls`/`creative_autochaff`, write a Postgres temp table via
+cross-catalog CTAS, `CALL` the cloned insert proc (`postgres.system.execute`), and advance the version
+watermark last. `creative_id` comes from a Postgres sequence reserved as a `[start,end]` block (replaces
+the Universal Creative API). All Postgres objects are `tempwork.*_ctv_poc` **clones** (real `creatives.*`
+untouched). Validated on the VM: **26,592** creatives staged. Details + build learnings in
+`docs/ctv_creative_push.md`; clone objects in `ddl/postgres/piece3_tempwork_ctv_poc.sql`.
+
+Next up: **Piece 3 Job B (first-seen update)**, then Pieces 4–5, in order. Some library upgrades are
+parked as a future action item (`docs/runbook.md` §6).
 
 **Resuming in a new window?** Start with `docs/runbook.md`, `docs/ctv_ingestion.md`, and `scripts/vm_setup.md`.
