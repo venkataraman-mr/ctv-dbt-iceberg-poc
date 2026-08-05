@@ -46,7 +46,7 @@ Use a second VS Code window connected via **Remote-SSH** to the VM for *running 
 (docker/dbt/logs) — not for editing the same files, to avoid divergence between the two copies.
 
 ## Status
-**Foundation + Reference sync (hive + UC) + Postgres + CTV ingestion (Piece 1) + Piece 3 Job A (creative push) VALIDATED; Pieces 3 (Job B)–5 remaining.**
+**Foundation + Reference sync (hive + UC) + Postgres + CTV ingestion (Piece 1) + Piece 3 (Job A creative push + Job B first-seen/occurrence-summary) VALIDATED & concurrency-safe; Pieces 4–5 remaining.**
 
 *Foundation (2026-07-22):* the full stack (nessie · trino · dbt · ingestion) builds and runs on the
 EC2 VM, and the two-engine smoke test passes — Trino and PyIceberg both read/write one Iceberg table
@@ -105,7 +105,17 @@ the Universal Creative API). All Postgres objects are `tempwork.*_ctv_poc` **clo
 untouched). Validated on the VM: **26,592** creatives staged. Details + build learnings in
 `docs/ctv_creative_push.md`; clone objects in `ddl/postgres/piece3_tempwork_ctv_poc.sql`.
 
-Next up: **Piece 3 Job B (first-seen update)**, then Pieces 4–5, in order. Some library upgrades are
-parked as a future action item (`docs/runbook.md` §6).
+*Piece 3 — Job B (2026-08-05):* two independent **version-watermarked** sub-pipelines, run together and
+concurrency-safe. First-seen update (`crtv_firstseen`) `CALL`s the cloned update proc to pull each
+`creative_first_seen` row back to its earliest occurrence; occurrence summary
+(`crtv_occ_summary_candidate` → `_final`) reads the CDF unioned with the parked buffer
+`missing_digital_occurrence_for_summary`, `CALL`s the upsert proc (occurrence counts + first/last run +
+7-day), and runs the park/release `MERGE` back into the buffer. Concurrent watermark writes are made safe
+by **partitioning `silver.watermark_control` by `watermark_name`** (a single-file control table otherwise
+collides under Iceberg optimistic concurrency, which Trino won't retry). Details + all learnings in
+`docs/ctv_creative_push.md`.
+
+Next up: **Piece 4 (sync-back)**, then Piece 5, in order. Some library upgrades are parked as a future
+action item (`docs/runbook.md` §6).
 
 **Resuming in a new window?** Start with `docs/runbook.md`, `docs/ctv_ingestion.md`, and `scripts/vm_setup.md`.

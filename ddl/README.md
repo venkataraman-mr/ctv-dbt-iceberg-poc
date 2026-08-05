@@ -22,13 +22,19 @@ by the Spark→Trino mapping in each file's header (STRING→VARCHAR, TIMESTAMP�
 VARIANT→VARCHAR, IDENTITY/DEFAULT dropped since `occurrence_id`/`creative_id` come from Postgres
 sequences, CLUSTER BY→partitioning/sorted_by). They pre-create the structures the Piece 3–5 models write into.
 
-**Postgres side (Piece 3):** `ddl/postgres/piece3_tempwork_ctv_poc.sql` (run once on prod Postgres via
-`psql`, not Trino) creates the creative-push **clone** objects in the `tempwork` schema with a
-`_ctv_poc` suffix — clone tables (`creative_staging_ctv_poc`, `creative_first_seen_ctv_poc`), the two
-cloned stored procs, the `creative_id_seq_ctv_poc` sequence, and the id-block table + reservation proc.
-Real `creatives.*` are untouched. See `docs/ctv_creative_push.md`. Watermark **seed rows** for Piece 3
-Job A/B (`DIGITAL_RAW_OCC_TO_CRTV_STAGING` version, `DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE` timestamp)
-are in `ddl/03` — run once before the first Job A/B run.
+**Postgres side (Piece 3):** `ddl/postgres/piece3_tempwork_ctv_poc.sql` (run once on prod Postgres via a
+SQL client — `psql` is not on the VM) creates the creative-push **clone** objects in the `tempwork`
+schema with a `_ctv_poc` suffix — clone tables (`creative_staging_ctv_poc`, `creative_first_seen_ctv_poc`,
+`creative_occurrence_summary_ctv_poc`), the three cloned stored procs (insert / first-seen update /
+occ-summary upsert), the `creative_id_seq_ctv_poc` sequence, and the id-block table + reservation proc.
+Real `creatives.*` are untouched. Requires membership in `tempwork_admin_role` (a DBA event trigger
+reassigns new `tempwork` tables to it: `GRANT tempwork_admin_role TO <login>;`). See
+`docs/ctv_creative_push.md`. **Iceberg changes for Job B:** `bronze.missing_digital_occurrence_for_summary`
+gains `capture_timestamp` (ddl/04); `silver.watermark_control` is **partitioned by `watermark_name`**
+(ddl/03) so concurrent watermarked jobs don't collide (retrofit = recreate preserving rows — see the
+ddl/03 comment). Watermark **seed rows** for Piece 3 Job A/B (`DIGITAL_RAW_OCC_TO_CRTV_STAGING`,
+`DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE`, `DIGITAL_RAW_OCC_SUMMARY_PSQL` — all version-based) are in
+`ddl/03` — run once before the first Job A/B run.
 
 The **14 reference tables** (`km_preparation_db.*`, `km_preparation_gold_db.*`, `productcentral.*`) are
 provisioned by the Option C reference sync (`ingestion/reference_sync.py`) — see `docs/reference_tables.md`.

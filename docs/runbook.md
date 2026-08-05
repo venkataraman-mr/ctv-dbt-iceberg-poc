@@ -163,6 +163,44 @@ docker exec -i trino trino --execute "SELECT last_commit_version, transaction_st
 First validated run: 26,592 creatives staged, `creative_first_seen` seeded 1:1, `creative_autochaff` 0,
 watermark `SUCCEEDED`. (Reset commands for a clean re-test are in `docs/ctv_creative_push.md`.)
 
+## 4e. Piece 3 — Job B (first-seen update + occurrence summary) — VALIDATED (2026-08-05)
+Two independent **version-watermarked** sub-pipelines, run together, Trino/dbt-native. First-seen update
+(`crtv_firstseen`, `DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE`) → `CALL` the cloned update proc (earliest
+occurrence). Occurrence summary (`crtv_occ_summary_candidate` → `crtv_occ_summary_final`,
+`DIGITAL_RAW_OCC_SUMMARY_PSQL`) → CDF unioned with the parked buffer `missing_digital_occurrence_for_summary`,
+aggregate → `CALL` the upsert proc, then a park/release `MERGE` back into the buffer. Full detail:
+**`docs/ctv_creative_push.md`**.
+
+Setup (once):
+```bash
+# Postgres (PG client — psql is NOT on the VM): re-run ddl/postgres/piece3_tempwork_ctv_poc.sql
+#   (adds creative_occurrence_summary_ctv_poc + its upsert proc). Requires membership in tempwork_admin_role:
+#   GRANT tempwork_admin_role TO <login>;   (a DBA event trigger reassigns new tempwork tables to that role)
+# Trino: add the buffer column, seed the two Job B version watermarks, and partition watermark_control:
+docker exec -i trino trino --execute "ALTER TABLE iceberg.bronze.missing_digital_occurrence_for_summary ADD COLUMN capture_timestamp TIMESTAMP(6) WITH TIME ZONE"
+docker exec -i trino trino --execute "INSERT INTO iceberg.silver.watermark_control (watermark_name,start_timestamp,end_timestamp,last_commit_version,current_commit_version,transaction_status,created_timestamp,updated_timestamp) VALUES ('DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE',NULL,NULL,NULL,NULL,'SUCCEEDED',current_timestamp,current_timestamp)"
+docker exec -i trino trino --execute "INSERT INTO iceberg.silver.watermark_control (watermark_name,start_timestamp,end_timestamp,last_commit_version,current_commit_version,transaction_status,created_timestamp,updated_timestamp) VALUES ('DIGITAL_RAW_OCC_SUMMARY_PSQL',NULL,NULL,NULL,NULL,'SUCCEEDED',current_timestamp,current_timestamp)"
+# partition watermark_control by watermark_name (recreate preserving rows — see ddl/03 comment):
+docker exec -i trino trino <<'SQL'
+CREATE TABLE iceberg.silver.watermark_control_bak AS SELECT * FROM iceberg.silver.watermark_control;
+DROP TABLE iceberg.silver.watermark_control;
+CREATE TABLE iceberg.silver.watermark_control (watermark_name VARCHAR, start_timestamp TIMESTAMP(6) WITH TIME ZONE, end_timestamp TIMESTAMP(6) WITH TIME ZONE, last_commit_version BIGINT, current_commit_version BIGINT, transaction_status VARCHAR, created_timestamp TIMESTAMP(6) WITH TIME ZONE, updated_timestamp TIMESTAMP(6) WITH TIME ZONE) WITH (format='PARQUET', partitioning=ARRAY['watermark_name'], max_commit_retry=20);
+INSERT INTO iceberg.silver.watermark_control SELECT * FROM iceberg.silver.watermark_control_bak;
+DROP TABLE iceberg.silver.watermark_control_bak;
+SQL
+```
+Run / verify:
+```bash
+docker compose run --rm dbt dbt run --select crtv_firstseen crtv_occ_summary_candidate crtv_occ_summary_final
+docker exec -i trino trino --execute "SELECT count(*) FROM postgres.tempwork.creative_occurrence_summary_ctv_poc"
+docker exec -i trino trino --execute "SELECT count(*) FROM iceberg.bronze.missing_digital_occurrence_for_summary"   # parked-unresolved
+```
+**Concurrency:** `watermark_control` is written by every watermarked flow. Unpartitioned it's a single
+data file, so concurrent writers (Job B's two sub-pipelines; Job A vs Job B on schedule) hit
+`ICEBERG_COMMIT_ERROR "Found conflicting files"` — a serializable conflict Trino does **not** retry
+(`max_commit_retry` doesn't help). Partitioning it by `watermark_name` (above) isolates each process's
+row to its own file, so runs are concurrency-safe at `threads=4`.
+
 ## 5. Prod Postgres — reachability RESOLVED, Trino catalog WIRED (2026-07-26)
 Cross-cloud reachability was BLOCKED; DevOps opened the path (verified: `bash scripts/pg_connectivity_test.sh`
 → DNS ok, TCP OPEN, psql auth OK as `databricks_admin_user` @ `vxcentral`, PostgreSQL 16.4). The Trino

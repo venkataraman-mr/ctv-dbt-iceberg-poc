@@ -1,10 +1,13 @@
-# Piece 3 — Creative push (Job A) — VALIDATED (2026-08-04)
+# Piece 3 — Creative push (Job A + Job B) — VALIDATED (2026-08-05)
 
 Piece 3 pushes new CTV creatives from `bronze.digital_raw_occurrence` into Postgres, and maintains the
-bronze creative registries. It is the dbt-trino port of the Databricks `DigitalRawocctoCrtvStaging` +
-`RawocctoDigitalCrtvFirstseen` classes. **Job A** (`DIGITAL_RAW_OCC_TO_CRTV_STAGING`, creative staging +
-first-seen seed) is built and validated end-to-end on the VM. **Job B**
-(`DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE`, first-seen earliest-occurrence maintenance) is next.
+bronze creative registries. It is the dbt-trino port of the Databricks `DigitalRawocctoCrtvStaging`,
+`RawocctoDigitalCrtvFirstseen`, and `CrtvOccSummary` classes. Both jobs are built and validated
+end-to-end on the VM:
+- **Job A** (`DIGITAL_RAW_OCC_TO_CRTV_STAGING`) — creative staging + first-seen seed (this doc's main body).
+- **Job B** — two independent version-watermarked sub-pipelines run together: first-seen update
+  (`DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE`) + occurrence summary (`DIGITAL_RAW_OCC_SUMMARY_PSQL`).
+  See "Job B" below.
 
 ## Design — Trino/dbt-native, no Python
 
@@ -149,6 +152,57 @@ docker exec -i trino trino --execute "UPDATE iceberg.silver.watermark_control SE
 docker exec -i trino trino --execute "SELECT * FROM TABLE(postgres.system.query(query => 'SELECT setval(''tempwork.creative_id_seq_ctv_poc'', 26000000000, false)'))"
 ```
 
+## Job B — first-seen update + occurrence summary (2026-08-05)
+
+Two independent sub-pipelines, both **version-watermarked** (Job B was consolidated onto version
+watermarks — the timestamp macros stay for Pieces 4–5), reading `digital_raw_occurrence` separately and
+run together as one Job B. All Postgres targets are `tempwork.*_ctv_poc` clones.
+
+**First-seen update** (`crtv_firstseen`, watermark `DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE`) — port of
+`RawocctoDigitalCrtvFirstseen`. One model: reads new inserts, `INNER JOIN creative_unique_urls` for the
+`creative_id`, joins the media/market dims, builds the occurrence-level payload; post-hooks write the PG
+temp table and `pg_call` the cloned update proc, which pulls each `creative_first_seen` row back to its
+EARLIEST occurrence (`UPDATE … WHERE trg.occurrence_timestamp > tmp.occurrence_timestamp`). Job A seeds
+`creative_first_seen`; Job B only updates. `REPLACE(x,' ','')` → `replace(x, chr(0), '')` (Spark
+` ` is the NUL char here, unlike the Postgres proc's literal-` ` strip).
+
+**Occurrence summary** (`crtv_occ_summary_candidate` → `crtv_occ_summary_final`, watermark
+`DIGITAL_RAW_OCC_SUMMARY_PSQL`) — port of `CrtvOccSummary` (minus `PrintCreativeOccurrenceSummary`).
+Candidate = the CDF read **UNION the parked buffer** `bronze.missing_digital_occurrence_for_summary`,
+deduped latest per `(provider_code, provider_occurrence_id)`, joined to resolve `creative_id` / market /
+media and anti-joined against `creative_autochaff`. Final = the aggregate (rows with `creative_id` +
+`media_property_id`) grouped with `min/max capture_timestamp` + `occ_cnt`. Post-hooks: PG temp CTAS →
+`pg_call` the upsert proc (accumulates `occurrence_count` + `first_run`/`last_run` + a 7-day count) →
+**park/release `MERGE`** into the buffer (`WHEN MATCHED AND creative_id resolved THEN DELETE`;
+`WHEN NOT MATCHED AND creative_id null THEN INSERT`) → watermark finish. This is the one place using an
+Iceberg `MERGE` with `DELETE` (works on Nessie; fall back to `DELETE`+`INSERT` if it regresses).
+
+New objects: PG clone `tempwork.creative_occurrence_summary_ctv_poc` + `sp_dbx_digital_upsert_to_crtv_occ_summary_ctv_poc`
+(`ddl/postgres/piece3_tempwork_ctv_poc.sql`); `capture_timestamp` added to `bronze.missing_digital_occurrence_for_summary`
+(ddl/04, Databricks MRVXVC-11059); watermark seeds `DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE` +
+`DIGITAL_RAW_OCC_SUMMARY_PSQL` (ddl/03). Both jobs tagged `job_b`; the generalized `on-run-end` cleanup
+drops the `job_b` scratch after a clean run.
+
+Run (parallel is safe after the watermark-table partitioning fix below):
+```bash
+docker compose run --rm dbt dbt run --select crtv_firstseen crtv_occ_summary_candidate crtv_occ_summary_final
+docker exec -i trino trino --execute "SELECT count(*) FROM postgres.tempwork.creative_occurrence_summary_ctv_poc"
+docker exec -i trino trino --execute "SELECT count(*) FROM iceberg.bronze.missing_digital_occurrence_for_summary"   -- parked-unresolved
+```
+
+## Concurrency — watermark_control partitioned by watermark_name (2026-08-05)
+
+Job B's two sub-pipelines (and, on schedule, Job A vs Job B) write `silver.watermark_control`
+concurrently. As one tiny **unpartitioned** table it was a single data file, so any two concurrent
+writers rewrote the same file → `ICEBERG_COMMIT_ERROR "Found conflicting files"`. This is a
+serializable-isolation row-conflict that Trino does **not** retry — `max_commit_retry` didn't help (the
+run failed in ~1s, no retry). Fix: **partition `watermark_control` by `watermark_name`** (ddl/03), so
+each process's row is its own partition = its own file; different processes rewrite different files and
+Iceberg's conflict check prunes non-matching partitions. Now Job B runs at full `threads=4` cleanly, and
+any concurrent mix of watermarked jobs is safe. `max_commit_retry=20` kept as a cheap safety margin.
+Retrofit needs a recreate (partition spec can't be added to existing files) — back up rows, recreate
+partitioned, restore (commands in the runbook / this file's history).
+
 ## Build learnings (Trino/dbt gotchas found on the VM — so they are not rediscovered)
 
 - **`IS TRUE` unsupported** in Trino (`IS` accepts only `NULL`/`NOT`/`DISTINCT`) → use `= true`.
@@ -166,6 +220,15 @@ docker exec -i trino trino --execute "SELECT * FROM TABLE(postgres.system.query(
 - **Watermark finish froze to a no-op** — `watermark_version_finish` returns `"select 1"` when
   `execute` is False; capturing it via `{% set %}` at parse baked the no-op. Fix: pass it as a run-time
   template string `"{{ watermark_version_finish('…') }}"` in the hook list (renders at run, `execute=True`).
+- **Jinja loop scope (cleanup macro)** — a `{% set %}` inside a `{% for %}` is loop-scoped and doesn't
+  escape, so the cleanup gate flag stayed false and nothing dropped. Fix: hold flags on a `namespace()`.
+- **Concurrent watermark writers** — two Job B sub-pipelines (and Job A vs Job B on schedule) writing the
+  single-file `watermark_control` collide (`ICEBERG_COMMIT_ERROR "Found conflicting files"`); Trino does
+  not retry that serializable conflict (`max_commit_retry` didn't help). Fix: partition the table by
+  `watermark_name` so each process writes its own file. Then `threads=4` is safe.
+- **Postgres event trigger on `tempwork`** — a DBA event trigger (`dba.trg_create_set_owner`) reassigns
+  every new `tempwork` table to `tempwork_admin_role`; the login must be a MEMBER of that role
+  (`GRANT tempwork_admin_role TO <login>;`) or `CREATE TABLE` fails with "must be able to SET ROLE".
 
 ## Source (Databricks, read-only)
 
