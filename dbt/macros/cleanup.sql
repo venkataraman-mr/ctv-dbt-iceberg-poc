@@ -17,21 +17,27 @@
     {{ return('') }}
   {% endif %}
 
-  {#- only clean up if the gate model (the terminal push model) succeeded this run -#}
-  {% set gate_ok = false %}
+  {#- only clean up if the gate model (the terminal push model) succeeded this run.
+      NOTE: use a namespace — a plain {% set %} inside a {% for %} is loop-scoped and won't escape. -#}
+  {% set ns = namespace(gate_ok=false, dropped=0) %}
   {% for r in results %}
-    {% if r.node.resource_type == 'model' and r.node.name == gate_model and r.status == 'success' %}
-      {% set gate_ok = true %}
+    {% if r.node.resource_type == 'model' and r.node.name == gate_model and (r.status | string) == 'success' %}
+      {% set ns.gate_ok = true %}
     {% endif %}
   {% endfor %}
-  {% if not gate_ok %}{{ return('') }}{% endif %}
+  {% if not ns.gate_ok %}
+    {{ log('Job A cleanup: skipped (gate model ' ~ gate_model ~ ' did not succeed this run)', info=true) }}
+    {{ return('') }}
+  {% endif %}
 
   {% for r in results %}
     {% set n = r.node %}
-    {% if n.resource_type == 'model' and tag in (n.config.tags or []) and r.status == 'success' %}
+    {% if n.resource_type == 'model' and tag in (n.config.tags or []) and (r.status | string) == 'success' %}
       {% set rel = n.database ~ '.' ~ n.schema ~ '.' ~ n.identifier %}
       {% do run_query('drop table if exists ' ~ rel) %}
+      {% set ns.dropped = ns.dropped + 1 %}
       {{ log('Job A cleanup: dropped ' ~ rel, info=true) }}
     {% endif %}
   {% endfor %}
+  {{ log('Job A cleanup: dropped ' ~ ns.dropped ~ ' scratch table(s) tagged ' ~ tag, info=true) }}
 {% endmacro %}
