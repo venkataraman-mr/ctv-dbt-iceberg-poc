@@ -8,6 +8,12 @@ macro-paths: ["macros"]
 target-path: "target"
 clean-targets: ["target", "dbt_packages"]
 
+# Drop the Job A scratch tables (models tagged 'job_a') at end of a successful run — the analog of the
+# Databricks jobwork DROP. Only fires when crtv_staging_final succeeded; a failed run keeps them for
+# debugging. Opt out to inspect them: dbt run ... --vars 'keep_job_a_tables: true'
+on-run-end:
+  - "{{ cleanup_tagged_models(results, 'job_a', 'crtv_staging_final') }}"
+
 models:
   ctv_occurrence:
     +materialized: view
