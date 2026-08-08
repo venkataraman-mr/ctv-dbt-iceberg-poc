@@ -46,7 +46,7 @@ Use a second VS Code window connected via **Remote-SSH** to the VM for *running 
 (docker/dbt/logs) — not for editing the same files, to avoid divergence between the two copies.
 
 ## Status
-**Foundation + Reference sync (hive + UC) + Postgres + CTV ingestion (Piece 1) + Piece 3 (Job A creative push + Job B first-seen/occurrence-summary) VALIDATED & concurrency-safe; Pieces 4–5 remaining.**
+**Foundation + Reference sync (hive + UC) + Postgres + CTV ingestion (Piece 1) + Piece 3 (Job A creative push + Job B first-seen/occurrence-summary) VALIDATED & concurrency-safe. Piece 4 clone-seeding prerequisite: Mode 1 (new data) VALIDATED on the clones, Mode 2 (updates) pending the first daily-ingestion run. Piece 4 sync-back + Piece 5 remaining.**
 
 *Foundation (2026-07-22):* the full stack (nessie · trino · dbt · ingestion) builds and runs on the
 EC2 VM, and the two-engine smoke test passes — Trino and PyIceberg both read/write one Iceberg table
@@ -115,7 +115,23 @@ by **partitioning `silver.watermark_control` by `watermark_name`** (a single-fil
 collides under Iceberg optimistic concurrency, which Trino won't retry). Details + all learnings in
 `docs/ctv_creative_push.md`.
 
-Next up: **Piece 4 (sync-back)**, then Piece 5, in order. Some library upgrades are parked as a future
+*Piece 4 — seeding prerequisite (2026-08-05):* before the sync-back can run against clones, production
+creative data must be copied into them. `ddl/postgres/piece4_seed_tempwork_ctv_poc.sql` clones the rest of
+the creative table family the sync-back proc reads (`creative`, `creative_product`/`celebrity`/`competitor`,
+`creative_dedupe_map`, `creative_classification_engine_holding`, `creative_ai_classification_staging_vx0`,
+plus a `watermark_control` clone) and adds a **two-mode Postgres seeding proc**
+(`tempwork.sp_seed_creative_clones_ctv_poc`, run `CALL … ('ALL')`): Mode 1 seeds newly-staged creatives
+(watermarked off clone staging), Mode 2 refreshes creatives changed in prod (watermarked off
+`creative.updated_timestamp`, also catching parent-attribute changes), both pulling in one-hop dedup parents.
+Anchors take the reserved PoC id; imported parents keep their prod id (26 B boundary guard).
+`creative`/`staging_vx0`/`holding` upsert on `creative_id`; multi-row dependents + external-parent
+`first_seen`/`occ_summary` are delete-in-scope + insert. Every load is scope-gated (dedupe_map joined to the
+run's `_seed_idmap`) to our CTV clones + related parents; descriptor fields come from clone staging/first_seen
+for our creatives, prod for external parents. Real `creatives.*`/`ml_results.*` stay read-only;
+`creative_archive` and the `reference.*`/`config.*`/`productcentral.*` lookups are not cloned. **Mode 1 (new
+data) validated on the clones; Mode 2 pending the first daily-ingestion run.** Details in `docs/ctv_creative_seed.md`.
+
+Next up: **Piece 4 (sync-back)** itself, then Piece 5, in order. Some library upgrades are parked as a future
 action item (`docs/runbook.md` §6).
 
 **Resuming in a new window?** Start with `docs/runbook.md`, `docs/ctv_ingestion.md`, and `scripts/vm_setup.md`.

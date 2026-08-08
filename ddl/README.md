@@ -36,6 +36,24 @@ ddl/03 comment). Watermark **seed rows** for Piece 3 Job A/B (`DIGITAL_RAW_OCC_T
 `DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE`, `DIGITAL_RAW_OCC_SUMMARY_PSQL` — all version-based) are in
 `ddl/03` — run once before the first Job A/B run.
 
+**Postgres side (Piece 4 seeding prerequisite):** `ddl/postgres/piece4_seed_tempwork_ctv_poc.sql`
+(run once on prod Postgres via a SQL client) clones the rest of the creative table family the Piece 4
+sync-back proc reads — `creative`, `creative_product`, `creative_celebrity`, `creative_competitor`,
+`creative_dedupe_map`, `creative_classification_engine_holding`, `ml_results.creative_ai_classification_staging_vx0`,
+plus a `watermark_control` clone — and adds a two-mode seeding proc,
+`tempwork.sp_seed_creative_clones_ctv_poc(p_mode)`, that copies production data into them keyed on
+`creative_url_hash`. Run it adhoc: `CALL tempwork.sp_seed_creative_clones_ctv_poc('ALL');` (or `'NEW'` /
+`'UPDATE'`). Mode 1 (new inserts) is watermarked off clone staging; Mode 2 (creative updates) off prod
+`creative.updated_timestamp` and also catches parent-attribute changes; both marks live in the
+`watermark_control_ctv_poc` clone. Anchor creatives take the reserved PoC id; missing dedup parents keep
+their prod id (the 26 B reserved boundary separates the two). Write strategy: `creative`/`staging_vx0`/`holding`
+upsert on `creative_id`; the multi-row dependents + external-parent `first_seen`/`occ_summary` are
+delete-in-scope + insert. Every load is scope-gated to our CTV clones + their related parents (dedupe_map
+joined to the run's `_seed_idmap`); descriptor fields come from clone staging/first_seen for our creatives,
+prod for external parents. Real `creatives.*`/`ml_results.*` are read-only; `creative_archive` and the
+`reference.*`/`config.*`/`productcentral.*` lookups are not cloned. **Mode 1 validated on the clones; Mode 2
+pending the first daily-ingestion run.** See `docs/ctv_creative_seed.md`.
+
 The **14 reference tables** (`km_preparation_db.*`, `km_preparation_gold_db.*`, `productcentral.*`) are
 provisioned by the Option C reference sync (`ingestion/reference_sync.py`) — see `docs/reference_tables.md`.
 Three more reference dims used by Pieces 3–5 (`reference.creative_match_type`, `global_market`,

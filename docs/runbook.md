@@ -201,6 +201,40 @@ data file, so concurrent writers (Job B's two sub-pipelines; Job A vs Job B on s
 (`max_commit_retry` doesn't help). Partitioning it by `watermark_name` (above) isolates each process's
 row to its own file, so runs are concurrency-safe at `threads=4`.
 
+## 4f. Piece 4 — seed production creative data into the clones — VALIDATED for new-data (2026-08-08)
+Prerequisite for the Piece 4 sync-back: the unchanged proc `creatives.sp_dbx_creative_get_changes_for_databricks`
+will run against `tempwork.*_ctv_poc` clones, so production creative data must be copied into them first. A
+**pure Postgres seeding proc** does this — no Trino/dbt (both prod `creatives.*`/`ml_results.*` and `tempwork`
+are in the same Postgres). Anchor = creatives in `creative_staging_ctv_poc` (keyed on `creative_url_hash`);
+their one-hop dedup parents are pulled in too. Our creatives take the reserved PoC id; external parents keep
+their prod id (26 B reserved boundary). Full design + decisions: **`docs/ctv_creative_seed.md`**.
+
+Setup (once, on prod Postgres via a SQL client — `psql` is NOT on the VM; requires `tempwork_admin_role`):
+```sql
+-- creates the 7 new clones (creative, creative_product/celebrity/competitor, creative_dedupe_map,
+-- creative_classification_engine_holding, creative_ai_classification_staging_vx0), the watermark_control
+-- clone (2 seed marks), and the seeding procs. Idempotent.
+\i ddl/postgres/piece4_seed_tempwork_ctv_poc.sql
+```
+Run (adhoc / manual — later scheduled once daily ingestion starts):
+```sql
+CALL tempwork.sp_seed_creative_clones_ctv_poc('ALL');      -- Mode 1 (new inserts) then Mode 2 (creative updates); default
+-- or a single phase:
+CALL tempwork.sp_seed_creative_clones_ctv_poc('NEW');      -- new inserts only (watermark: clone staging.updated_timestamp)
+CALL tempwork.sp_seed_creative_clones_ctv_poc('UPDATE');   -- creative updates only (watermark: prod creative.updated_timestamp)
+
+-- inspect the two watermarks (high-water in table_tx_end):
+SELECT watermark_name, table_tx_start, table_tx_end, tx_status, tx_message, tx_datetime
+FROM tempwork.watermark_control_ctv_poc;
+```
+**Status:** Mode 1 (new data) VALIDATED on the clone tables. Mode 2 (creative-level updates) to be exercised
+once daily ingestion is running. **Write strategy:** `creative`/`staging_vx0`/`holding` upsert
+(`ON CONFLICT (creative_id)`); the multi-row tables (`product`/`celebrity`/`competitor`/`dedupe_map`) and the
+external-parent `first_seen`/`occ_summary` rows are delete-in-scope + insert. **Scope gate:** every load is
+restricted to our CTV clones + their related parents (dedupe_map joined back to the run's `_seed_idmap`), so a
+non-CTV child of a CTV parent is never loaded. Descriptor fields (provider/type/media, etc.) are sourced from
+the clone staging/first_seen for our creatives and from prod for external parents.
+
 ## 5. Prod Postgres — reachability RESOLVED, Trino catalog WIRED (2026-07-26)
 Cross-cloud reachability was BLOCKED; DevOps opened the path (verified: `bash scripts/pg_connectivity_test.sh`
 → DNS ok, TCP OPEN, psql auth OK as `databricks_admin_user` @ `vxcentral`, PostgreSQL 16.4). The Trino
