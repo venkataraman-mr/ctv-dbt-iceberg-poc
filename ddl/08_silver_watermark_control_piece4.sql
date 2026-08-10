@@ -9,8 +9,8 @@
 INSERT INTO iceberg.silver.watermark_control
     (watermark_name, start_timestamp, end_timestamp, last_commit_version, current_commit_version,
      transaction_status, created_timestamp, updated_timestamp)
-SELECT v.watermark_name, v.start_timestamp, v.end_timestamp, v.last_commit_version, v.current_commit_version,
-       v.transaction_status, v.created_timestamp, v.updated_timestamp
+SELECT v.watermark_name, v.start_timestamp, v.end_timestamp, c.last_commit_version, c.current_commit_version,
+       c.transaction_status, c.created_timestamp, c.updated_timestamp
 FROM (
     VALUES
       -- task 1 creative sync (prod creatives.creative.updated_timestamp)
