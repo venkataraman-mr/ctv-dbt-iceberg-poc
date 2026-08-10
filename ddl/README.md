@@ -40,7 +40,7 @@ ddl/03 comment). Watermark **seed rows** for Piece 3 Job A/B (`DIGITAL_RAW_OCC_T
 (run once on prod Postgres via a SQL client) clones the rest of the creative table family the Piece 4
 sync-back proc reads — `creative`, `creative_product`, `creative_celebrity`, `creative_competitor`,
 `creative_dedupe_map`, `creative_classification_engine_holding`, `ml_results.creative_ai_classification_staging_vx0`,
-plus a `watermark_control` clone — and adds a two-mode seeding proc,
+`creatives.component_coding` (task-4 component sync), plus a `watermark_control` clone — and adds a two-mode seeding proc,
 `tempwork.sp_seed_creative_clones_ctv_poc(p_mode)`, that copies production data into them keyed on
 `creative_url_hash`. Run it adhoc: `CALL tempwork.sp_seed_creative_clones_ctv_poc('ALL');` (or `'NEW'` /
 `'UPDATE'`). Mode 1 (new inserts) is watermarked off clone staging; Mode 2 (creative updates) off prod

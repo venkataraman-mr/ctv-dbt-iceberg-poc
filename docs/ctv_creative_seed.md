@@ -56,6 +56,7 @@ So the two things the sync-back proc leans on that we must reproduce faithfully 
 | `creative_dedupe_map_ctv_poc` | **New clone.** Parent↔child map (rows where child ∈ our creatives). | Seed owns |
 | `creative_classification_engine_holding_ctv_poc` | **New clone.** CE QA gate. PK added on `creative_id` for upsert. | Seed owns |
 | `creative_ai_classification_staging_vx0_ctv_poc` | **New clone.** CE request/response log. | Seed owns |
+| `component_coding_ctv_poc` | **New clone** of `creatives.component_coding` (Piece 4 task 4 — component sync). Per-creative, multi-row; typically empty for CTV. | Seed owns |
 | `watermark_control_ctv_poc` | **New clone** of `config.watermark_control`; two seed marks. | Seed owns |
 | `creative_staging_ctv_poc` | Piece 3 Job A. **Not seeded** — the Mode 1 driver and reserved-id authority. Parents reference prod `creatives.creative_staging` directly. | Piece 3 |
 | `creative_first_seen_ctv_poc` | Job B owns rows for our creatives. Seed **adds external-parent (prod-id) rows only**. | Job B + seed (ext. parents) |
@@ -184,11 +185,11 @@ so `RAISE NOTICE` output in the client log is the quickest read on what a run di
 - `holding` gets a PK on `creative_id` (prod has none) so the seed can upsert it.
 - **Write strategy** (one proc serves both new-insert and update cases): `creative`, `staging_vx0`, and
   `holding` are one-row-per-creative → **MERGE / upsert** (`ON CONFLICT (creative_id)`). `product`,
-  `celebrity`, `competitor`, `dedupe_map`, and the external-parent `first_seen` / `occ_summary` rows are
-  multi-row → **delete-in-scope + insert**, so prod *removals* (an unmapped product, a remapped child)
-  propagate.
+  `celebrity`, `competitor`, `component_coding`, `dedupe_map`, and the external-parent `first_seen` /
+  `occ_summary` rows are multi-row → **delete-in-scope + insert**, so prod *removals* (an unmapped product,
+  a remapped child) propagate.
 - Load happens in production insertion order (`first_seen → dedupe_map → occ_summary → staging_vx0 →
-  creative → product/celebrity/competitor → holding`).
+  creative → product/celebrity/competitor/component_coding → holding`).
 - Ghost parents (a parent orphaned by a remap, no CTV child left) are **left in place**; we don't garbage-
   collect them — we only keep `dedupe_map` truthful.
 - One-hop closure only (child → parent). We never expand to a parent's other children.
@@ -198,7 +199,7 @@ so `RAISE NOTICE` output in the client log is the quickest read on what a run di
   (`... creative_dedupe_map_ctv_poc d JOIN _seed_idmap ci ON ci.clone_creative_id = d.child_creative_id`) so
   it matches only the current batch's related parents, not every parent ever recorded. A non-CTV creative
   that is merely a child of a CTV parent never gets loaded. Applied to `creative`,
-  `staging_vx0`, `holding`, `product`/`celebrity`/`competitor`, and `occ_summary` (all run after dedupe_map,
+  `staging_vx0`, `holding`, `product`/`celebrity`/`competitor`/`component_coding`, and `occ_summary` (all run after dedupe_map,
   so the clone map is populated). `dedupe_map` itself enforces this via INNER child-side joins. `first_seen`
   is the one exception — it runs before dedupe_map in the prod insertion order and only inserts external-parent
   rows (our creatives' rows are already Job-B-owned), so it needs no gate. The delete-in-scope steps stay
@@ -237,5 +238,5 @@ detection unioned into the anchor set); it just hasn't been run against a live c
 
 Static checks (kept for regression): the file parses as valid Postgres grammar (libpg_query via `pglast`),
 and every column-remap insert has exact INSERT/SELECT parity (`creative` 94/94, `staging_vx0` 48/48,
-`first_seen` 36/36, `dedupe_map` 22/22, `product`/`celebrity`/`competitor` 10/7/7, `occ_summary` 10/10), with
+`first_seen` 36/36, `dedupe_map` 22/22, `product`/`celebrity`/`competitor` 10/7/7, `component_coding` 19/19, `occ_summary` 10/10), with
 the two upsert `DO UPDATE SET` lists at 93 and 47 non-PK columns.

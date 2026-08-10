@@ -211,9 +211,9 @@ their prod id (26 B reserved boundary). Full design + decisions: **`docs/ctv_cre
 
 Setup (once, on prod Postgres via a SQL client — `psql` is NOT on the VM; requires `tempwork_admin_role`):
 ```sql
--- creates the 7 new clones (creative, creative_product/celebrity/competitor, creative_dedupe_map,
--- creative_classification_engine_holding, creative_ai_classification_staging_vx0), the watermark_control
--- clone (2 seed marks), and the seeding procs. Idempotent.
+-- creates the 8 new clones (creative, creative_product/celebrity/competitor, creative_dedupe_map,
+-- creative_classification_engine_holding, creative_ai_classification_staging_vx0, component_coding),
+-- the watermark_control clone (2 seed marks), and the seeding procs. Idempotent.
 \i ddl/postgres/piece4_seed_tempwork_ctv_poc.sql
 ```
 Run (adhoc / manual — later scheduled once daily ingestion starts):

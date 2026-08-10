@@ -119,7 +119,7 @@ collides under Iceberg optimistic concurrency, which Trino won't retry). Details
 creative data must be copied into them. `ddl/postgres/piece4_seed_tempwork_ctv_poc.sql` clones the rest of
 the creative table family the sync-back proc reads (`creative`, `creative_product`/`celebrity`/`competitor`,
 `creative_dedupe_map`, `creative_classification_engine_holding`, `creative_ai_classification_staging_vx0`,
-plus a `watermark_control` clone) and adds a **two-mode Postgres seeding proc**
+`component_coding` (task-4 component sync), plus a `watermark_control` clone) and adds a **two-mode Postgres seeding proc**
 (`tempwork.sp_seed_creative_clones_ctv_poc`, run `CALL … ('ALL')`): Mode 1 seeds newly-staged creatives
 (watermarked off clone staging), Mode 2 refreshes creatives changed in prod (watermarked off
 `creative.updated_timestamp`, also catching parent-attribute changes), both pulling in one-hop dedup parents.

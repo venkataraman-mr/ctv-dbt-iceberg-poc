@@ -16,6 +16,7 @@
 --   tempwork.creative_dedupe_map_ctv_poc                     (clone of creatives.creative_dedupe_map)
 --   tempwork.creative_classification_engine_holding_ctv_poc  (clone of creatives.creative_classification_engine_holding)
 --   tempwork.creative_ai_classification_staging_vx0_ctv_poc  (clone of ml_results.creative_ai_classification_staging_vx0)
+--   tempwork.component_coding_ctv_poc                        (clone of creatives.component_coding; Piece 4 task 4)
 --   tempwork.watermark_control_ctv_poc                       (clone of config.watermark_control; 2 seed rows)
 --   tempwork.sp_seed_load_footprint_ctv_poc()                (internal: (re)load one anchor set)
 --   tempwork.sp_seed_creative_clones_ctv_poc(p_mode)         (entry point: Mode 1 + Mode 2)
@@ -304,6 +305,35 @@ CREATE TABLE IF NOT EXISTS tempwork.creative_ai_classification_staging_vx0_ctv_p
     tax_product_subsidiary_display_name varchar    NULL,
     ce_response_json                   jsonb       NULL,
     CONSTRAINT classification_staging_ctv_poc_pkey PRIMARY KEY (creative_id)
+);
+
+-- ---------------------------------------------------------------------------------------
+-- creatives.component_coding  (Piece 4 task 4 — component-coding sync). serial4 -> plain int4
+-- (value copied); template FK + indexes dropped; attribute_response kept as prod `json`.
+-- Keyed by creative_id (multi-row per creative). For CTV this is typically empty (component
+-- coding is print/mattress-oriented) but cloned + seeded so the sync runs unchanged.
+-- ---------------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tempwork.component_coding_ctv_poc (
+    component_coding_id   int4         NOT NULL,
+    creative_id           int8         NULL,
+    component_template_id int2         NOT NULL,
+    "sequence"            int2         NULL,
+    "share"               int2         NULL,
+    attribute_response    json         NULL,
+    is_logically_deleted  bool         NULL,
+    created               timestamp    NULL,
+    modified              timestamp    NULL,
+    creative_path         varchar(255) NULL,
+    page_no               int2         NULL,
+    height                float4       NULL,
+    width                 float4       NULL,
+    area                  float4       NULL,
+    x_offset              float4       NULL,
+    y_offset              float4       NULL,
+    status                varchar      NULL,
+    modified_by           int4         NULL,
+    order_number          int4         NULL,
+    CONSTRAINT component_coding_ctv_poc_pkey PRIMARY KEY (component_coding_id)
 );
 
 -- ---------------------------------------------------------------------------------------
@@ -667,6 +697,21 @@ BEGIN
            ck.created_timestamp, ck.updated_by_user_id, ck.updated_timestamp
     FROM creatives.creative_competitor ck
     JOIN _seed_idmap m ON m.prod_creative_id = ck.creative_id
+    WHERE m.is_ours
+       OR m.clone_creative_id IN (SELECT d.parent_creative_id FROM tempwork.creative_dedupe_map_ctv_poc d JOIN _seed_idmap ci ON ci.clone_creative_id = d.child_creative_id);
+
+    -- 2.7b  component_coding  [all in-scope; remap creative_id; multi-row per creative]  (delete + insert)
+    DELETE FROM tempwork.component_coding_ctv_poc
+      WHERE creative_id IN (SELECT clone_creative_id FROM _seed_idmap);
+    INSERT INTO tempwork.component_coding_ctv_poc
+        (component_coding_id, creative_id, component_template_id, "sequence", "share",
+         attribute_response, is_logically_deleted, created, modified, creative_path,
+         page_no, height, width, area, x_offset, y_offset, status, modified_by, order_number)
+    SELECT cco.component_coding_id, m.clone_creative_id, cco.component_template_id, cco."sequence", cco."share",
+           cco.attribute_response, cco.is_logically_deleted, cco.created, cco.modified, cco.creative_path,
+           cco.page_no, cco.height, cco.width, cco.area, cco.x_offset, cco.y_offset, cco.status, cco.modified_by, cco.order_number
+    FROM creatives.component_coding cco
+    JOIN _seed_idmap m ON m.prod_creative_id = cco.creative_id
     WHERE m.is_ours
        OR m.clone_creative_id IN (SELECT d.parent_creative_id FROM tempwork.creative_dedupe_map_ctv_poc d JOIN _seed_idmap ci ON ci.clone_creative_id = d.child_creative_id);
 
