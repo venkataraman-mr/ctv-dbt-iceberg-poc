@@ -10,7 +10,8 @@
        updated_timestamp := current_timestamp (MRVXVC-14938); first_seen_occurrence_id keeps the
        existing value when the incoming is null). Only holding_flag=false rows (source is pre-filtered).
     2. change log  -> iceberg.silver.gold_creative_change_log (json_object over the Databricks
-       json_log_columns; nested json cols re-parsed so they embed, not escape; absent-on-null).
+       json_log_columns; json cols kept as varchar strings -- json_parse would yield json-typed
+       values that json_object can't serialize without FORMAT JSON; timestamps ->varchar; absent-on-null).
     3. translation hold MERGE -> iceberg.silver.creative_mapping_translation_hold: park held
        (holding_flag=true) / release resolved (holding_flag=false). Keyed by creative_id.
     4. CE-holding merge-back (Postgres, via pg_call/system.execute): add held / remove processed in
@@ -252,9 +253,9 @@ insert into iceberg.silver.gold_creative_change_log
         key 'primary_product_id' value primary_product_id,
         key 'vx1_product_id' value vx1_product_id,
         key 'vx2_product_id' value vx2_product_id,
-        key 'secondary_products' value json_parse(secondary_products),
-        key 'vx1_secondary_products' value json_parse(vx1_secondary_products),
-        key 'vx2_secondary_products' value json_parse(vx2_secondary_products),
+        key 'secondary_products' value secondary_products,
+        key 'vx1_secondary_products' value vx1_secondary_products,
+        key 'vx2_secondary_products' value vx2_secondary_products,
         key 'classification_type' value classification_type,
         key 'classified_by_user_id' value classified_by_user_id,
         key 'classification_comments' value classification_comments,
@@ -269,13 +270,13 @@ insert into iceberg.silver.gold_creative_change_log
         key 'attribution_other_details' value attribution_other_details,
         key 'attribution_description' value attribution_description,
         key 'attribution_hashtag' value attribution_hashtag,
-        key 'attribution_competitor' value json_parse(attribution_competitor),
-        key 'attribution_celebrity' value json_parse(attribution_celebrity),
+        key 'attribution_competitor' value attribution_competitor,
+        key 'attribution_celebrity' value attribution_celebrity,
         key 'attribution_slogan_tagline' value attribution_slogan_tagline,
         key 'attribution_revision_description' value attribution_revision_description,
         key 'attribution_comments' value attribution_comments,
         key 'attribution_creative_tags' value attribution_creative_tags,
-        key 'custom_attributes' value json_parse(custom_attributes),
+        key 'custom_attributes' value custom_attributes,
         key 'attribution_timestamp' value cast(attribution_timestamp as varchar),
         key 'attribution_by_user_id' value attribution_by_user_id,
         key 'attribution_status' value attribution_status,
@@ -312,11 +313,11 @@ insert into iceberg.silver.gold_creative_change_log
         key 'first_seen_affiliate_name' value first_seen_affiliate_name,
         key 'due_timestamp' value cast(due_timestamp as varchar),
         key 'last_seen_timestamp' value cast(last_seen_timestamp as varchar),
-        key 'attribution_competitor_vx2' value json_parse(attribution_competitor_vx2),
+        key 'attribution_competitor_vx2' value attribution_competitor_vx2,
         key 'occurrence_description' value occurrence_description,
         key 'legacy_creative_id' value legacy_creative_id,
-        key 'creative_payload' value json_parse(creative_payload),
-        key 'machine_learning_payload' value json_parse(machine_learning_payload),
+        key 'creative_payload' value creative_payload,
+        key 'machine_learning_payload' value machine_learning_payload,
         key 'is_resegment' value is_resegment,
         key 'product_mapping_status' value product_mapping_status,
         key 'is_reclassified' value is_reclassified
