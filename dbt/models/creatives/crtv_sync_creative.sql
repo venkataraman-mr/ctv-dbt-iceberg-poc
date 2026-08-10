@@ -345,7 +345,6 @@ merge into iceberg.silver.creative_mapping_translation_hold t
       change_log_sql,
       translation_hold_sql,
       pg_call(ce_hold_pg_sql),
-      {#- relation passed as a LITERAL string: ref()/source() inside a run-time hook re-render degrade to `this`, which is frozen to the profile default schema (silver) -> would resolve to iceberg.silver.crtv_sync_creative. See docs/ctv_dbt_iceberg_poc.md. -#}
       "{{ watermark_ts_finish_from_relation('CTV_SYNC_CREATIVE', 'iceberg.bronze.crtv_sync_creative_revxlate', 'updated_timestamp', 'holding_flag = false') }}"
     ]
 ) }}
