@@ -28,3 +28,18 @@ sources:
     tables:
       - name: d_advertiser
       - name: d_product
+
+  # Piece 4 sync-back READS the seeded tempwork *_ctv_poc CLONES (not real creatives.*), via the
+  # Trino postgresql catalog. The *_forsync_tmp_* / *_hold_* / crtv_sync_* scratch are created at run
+  # time by the cloned procs (ddl/postgres/piece4_sync_procs_ctv_poc.sql); declared here so models can
+  # source() them. Writes back (CE-hold / advert-hold pushback) go via postgres.system.execute, not these.
+  - name: tempwork
+    database: postgres          # Trino catalog name (not Iceberg)
+    schema: tempwork
+    tables:
+      - name: creative_forsync_tmp_ctv_poc                          # task 1 proc output
+      - name: component_coding_forsync_tmp_ctv_poc                  # task 4 proc output
+      - name: crtv_sync_to_db_updated_crtvs_with_holding_flag_ctv_poc # task 1 CE-hold source (proc scratch)
+      - name: creative_first_seen_ctv_poc                           # task 2
+      - name: creative_dedupe_map_ctv_poc                           # task 3
+      - name: creative_ctv_poc                                      # task 3 delete pass

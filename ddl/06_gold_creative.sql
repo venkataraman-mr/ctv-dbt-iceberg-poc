@@ -182,12 +182,15 @@ CREATE TABLE IF NOT EXISTS iceberg.gold.creative_first_seen (
     edition_name                           VARCHAR,
     section_name                           VARCHAR,
     edition_id                             INTEGER,
-    section_id                             INTEGER
+    section_id                             INTEGER,
+    provider_campaign_landing_page         VARCHAR   -- Piece 4: written by the first-seen sync (prod has it; was missing here)
 )
 WITH (
     format = 'PARQUET',
     sorted_by = ARRAY['creative_id', 'creative_url_hash']
 );
+-- NOTE: tables already created on the VM need the retrofit (Iceberg ADD COLUMN is metadata-only):
+--   ALTER TABLE iceberg.gold.creative_first_seen ADD COLUMN provider_campaign_landing_page VARCHAR;
 
 CREATE TABLE IF NOT EXISTS iceberg.gold.digital_deployment_chain (
     deployment_chain_id                    BIGINT,
