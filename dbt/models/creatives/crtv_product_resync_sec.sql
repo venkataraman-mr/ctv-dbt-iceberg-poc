@@ -6,12 +6,12 @@
   didn't translate (the size-compact mismatch rule). Output: one row per creative with the new secondary arrays.
 #}
 
--- depends_on: {{ ref('crtv_sync_creative') }}
+{#- depends on _affected (ref below), which anchors the whole resync chain after last-seen. -#}
 
 {%- set pm  = source('productcentral', 'productmap') -%}
 {%- set aff = ref('crtv_product_resync_affected') -%}
 
-{{ config(materialized='table', schema='bronze', tags=['creatives', 'p4_sync'], views_enabled=false, on_table_exists='drop') }}
+{{ config(materialized='table', schema='bronze', tags=['creatives', 'p4_sync_creative_to_iceberg'], views_enabled=false, on_table_exists='drop') }}
 
 with base as (
     select creative_id, secondary_products

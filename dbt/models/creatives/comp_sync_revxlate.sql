@@ -20,7 +20,7 @@
 {%- set fs       = source('tempwork', 'component_coding_forsync_tmp_ctv_poc') -%}
 {%- set mattress = source('productcentral', 'vx0_vx2_mattress_product_mapping') -%}
 
-{{ config(materialized='table', schema='bronze', tags=['creatives', 'p4_sync'], views_enabled=false, on_table_exists='drop') }}
+{{ config(materialized='table', schema='bronze', tags=['creatives', 'p4_sync_creative_to_iceberg'], views_enabled=false, on_table_exists='drop') }}
 
 -- per component: the manufacturer's vx2_code + advert product -> mattress cmp_seq
 with comp_mfr as (

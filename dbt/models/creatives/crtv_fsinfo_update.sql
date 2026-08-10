@@ -29,9 +29,8 @@
   VALIDATE ON VM: parents updated, both watermarks advanced off their base, family-earliest is correct.
 #}
 
+{#- Databricks DAG: creative → first-seen-info. first-seen + dedup are transitive (creative depends on them). -#}
 -- depends_on: {{ ref('crtv_sync_creative') }}
--- depends_on: {{ ref('crtv_sync_first_seen') }}
--- depends_on: {{ ref('crtv_sync_dedupe_map') }}
 
 {%- set wm_fs   = 'CTV_FSINFO_FROM_FIRSTSEEN' -%}
 {%- set wm_crtv = 'CTV_FSINFO_FROM_CREATIVE' -%}
@@ -80,7 +79,7 @@ when matched and m.first_seen_occurrence_timestamp <> s.occurrence_timestamp the
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'p4_sync'],
+    tags=['creatives', 'p4_sync_creative_to_iceberg'],
     views_enabled=false,
     on_table_exists='drop',
     post_hook=[

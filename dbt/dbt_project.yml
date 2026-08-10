@@ -15,9 +15,10 @@ clean-targets: ["target", "dbt_packages"]
 on-run-end:
   - "{{ cleanup_tagged_models(results, 'job_a') }}"
   - "{{ cleanup_tagged_models(results, 'job_b') }}"
-  # p4_sync scratch cleanup intentionally DISABLED during the Piece-4 sync build so candidates
-  # (crtv_sync_*) persist for inspection. RE-ENABLE once the whole creative flow is built + validated:
-  #   - "{{ cleanup_tagged_models(results, 'p4_sync') }}"
+  # Piece-4 sync-back scratch cleanup: drop the bronze candidate/stage tables (crtv_sync_* / comp_sync_* /
+  # crtv_product_resync_*) at the end of a successful run — the analog of the Databricks jobwork DROP. Only
+  # fires if no model with that tag failed this run. Opt out: --vars 'keep_p4_sync_creative_to_iceberg_tables: true'.
+  - "{{ cleanup_tagged_models(results, 'p4_sync_creative_to_iceberg') }}"
 
 models:
   ctv_occurrence:

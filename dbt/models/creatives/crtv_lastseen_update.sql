@@ -19,7 +19,8 @@
   Piece 5 -> clean 0-update no-op now; validate after Piece 5. gold tables referenced as LITERAL relations.
 #}
 
--- depends_on: {{ ref('crtv_sync_creative') }}
+{#- Databricks DAG: occurrence-id → last-seen. -#}
+-- depends_on: {{ ref('crtv_occid_update') }}
 
 {%- set wm = 'CTV_LAST_SEEN_DIGITAL' -%}
 {%- set begin = watermark_ts_begin(wm) -%}
@@ -38,7 +39,7 @@ when matched and m.last_seen_timestamp <> s.capture_timestamp then update set
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'p4_sync'],
+    tags=['creatives', 'p4_sync_creative_to_iceberg'],
     views_enabled=false,
     on_table_exists='drop',
     post_hook=[

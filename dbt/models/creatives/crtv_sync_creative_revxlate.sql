@@ -18,7 +18,7 @@
 {%- set adv_map    = source('productcentral', 'vx0_vx2_advertiser_mapping') -%}
 {%- set advert = var('p4_advert_classification', "'Advert'") -%}
 
-{{ config(materialized='table', schema='bronze', tags=['creatives','p4_sync'], views_enabled=false) }}
+{{ config(materialized='table', schema='bronze', tags=['creatives','p4_sync_creative_to_iceberg'], views_enabled=false) }}
 
 with base as (
     select * from {{ ref('crtv_sync_creative_raw') }}

@@ -12,7 +12,7 @@
   PoC: with the watermark at max(change_dt) this is a clean ~0-row no-op (no productmap churn). Real diffs need churn.
 #}
 
--- depends_on: {{ ref('crtv_sync_creative') }}
+{#- depends on _affected / _prim / _sec (refs below); _affected anchors the chain after last-seen. -#}
 
 {%- set aff  = ref('crtv_product_resync_affected') -%}
 {%- set prim = ref('crtv_product_resync_prim') -%}
@@ -45,7 +45,7 @@ from {{ self_rel }}
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'p4_sync'],
+    tags=['creatives', 'p4_sync_creative_to_iceberg'],
     views_enabled=false,
     on_table_exists='drop',
     post_hook=[

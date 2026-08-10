@@ -50,7 +50,7 @@ when not matched then insert ({{ cols | join(', ') }})
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'p4_sync'],
+    tags=['creatives', 'p4_sync_creative_to_iceberg'],
     views_enabled=false,
     post_hook=[merge_sql, wm_finish]
 ) }}

@@ -12,6 +12,9 @@
   NOTE: component coding is a print/mattress concern -- expect the CTV forsync to be near-empty.
 #}
 
+{#- Databricks DAG: last-seen → (component ∥ product-resync). Component's entry runs after last-seen. -#}
+-- depends_on: {{ ref('crtv_lastseen_update') }}
+
 {%- set fs = source('tempwork', 'component_coding_forsync_tmp_ctv_poc') -%}
 {%- set comp_hold = 'postgres.tempwork.component_hold_creative_tmp_ctv_poc' -%}
 {%- set hold_src  = 'iceberg.silver.component_coding_translation_hold' -%}
@@ -19,7 +22,7 @@
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'p4_sync'],
+    tags=['creatives', 'p4_sync_creative_to_iceberg'],
     views_enabled=false,
     on_table_exists='drop',
     pre_hook=[

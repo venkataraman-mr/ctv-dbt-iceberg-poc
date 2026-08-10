@@ -50,7 +50,7 @@ when not matched and s.holding_flag = true then insert (component_coding_id) val
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'p4_sync'],
+    tags=['creatives', 'p4_sync_creative_to_iceberg'],
     views_enabled=false,
     on_table_exists='drop',
     post_hook=[

@@ -17,7 +17,7 @@
   per (creative_id, creative_url_hash) to avoid a Trino multi-match MERGE error if an occurrence pair repeats.
 #}
 
--- depends_on: {{ ref('crtv_sync_creative') }}
+{#- Databricks DAG: first-seen-info → occurrence-id. creative is transitive (fsinfo depends on creative). -#}
 -- depends_on: {{ ref('crtv_fsinfo_update') }}
 
 {%- set floor = var('p4_occid_updated_floor', '2025-10-13') -%}   {#- prod backfill cutoff; our data is newer so it passes -#}
@@ -35,7 +35,7 @@ when matched then update set
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'p4_sync'],
+    tags=['creatives', 'p4_sync_creative_to_iceberg'],
     views_enabled=false,
     on_table_exists='drop',
     post_hook=[ merge_sql ]

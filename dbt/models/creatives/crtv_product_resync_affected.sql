@@ -10,7 +10,8 @@
   values + an is_secondary_touched flag for the final affected filter downstream.
 #}
 
--- depends_on: {{ ref('crtv_sync_creative') }}
+{#- Databricks DAG: last-seen → (component ∥ product-resync). Product-resync's entry runs after last-seen. -#}
+-- depends_on: {{ ref('crtv_lastseen_update') }}
 
 {%- set wm = 'CTV_PRODUCT_RESYNC' -%}
 {%- set begin = watermark_ts_begin(wm) -%}
@@ -20,7 +21,7 @@
 {%- set pm   = source('productcentral', 'productmap') -%}
 {%- set hold = 'iceberg.silver.creative_mapping_translation_hold' -%}
 
-{{ config(materialized='table', schema='bronze', tags=['creatives', 'p4_sync'], views_enabled=false, on_table_exists='drop') }}
+{{ config(materialized='table', schema='bronze', tags=['creatives', 'p4_sync_creative_to_iceberg'], views_enabled=false, on_table_exists='drop') }}
 
 with pm_cdf as (
     select distinct primary_product_id, set_id

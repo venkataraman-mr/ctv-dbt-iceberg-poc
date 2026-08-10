@@ -14,6 +14,11 @@
   VALIDATE ON VM: the advert-hold CTAS + the cross-catalog CALL succeed and forsync populates.
 #}
 
+{#- Databricks DAG: (dedup ∥ first-seen) → creative. The creative chain's entry model runs after BOTH the dedup
+    task (exit = crtv_sync_dedupe_map_delete) and the first-seen task. -#}
+-- depends_on: {{ ref('crtv_sync_dedupe_map_delete') }}
+-- depends_on: {{ ref('crtv_sync_first_seen') }}
+
 {%- set fs = source('tempwork', 'creative_forsync_tmp_ctv_poc') -%}
 {%- set advert_hold = 'postgres.tempwork.creatives_advert_hold_tmp_ctv_poc' -%}
 {%- set hold_src = 'iceberg.silver.creative_mapping_translation_hold' -%}
@@ -21,7 +26,7 @@
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'p4_sync'],
+    tags=['creatives', 'p4_sync_creative_to_iceberg'],
     views_enabled=false,
     pre_hook=[
       'drop table if exists ' ~ advert_hold,

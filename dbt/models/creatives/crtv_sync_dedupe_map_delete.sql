@@ -36,7 +36,7 @@ where child_creative_id in (select creative_id from {{ self_rel }})
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'p4_sync'],
+    tags=['creatives', 'p4_sync_creative_to_iceberg'],
     views_enabled=false,
     post_hook=[delete_sql, wm_finish]
 ) }}

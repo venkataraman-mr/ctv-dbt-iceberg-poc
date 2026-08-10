@@ -24,7 +24,7 @@
 {%- set d_adv       = source('vx2_taxonomy', 'd_advertiser') -%}
 {%- set comp_map    = source('km_preparation_db', 'vx0_vx2_component_mapping') -%}
 
-{{ config(materialized='table', schema='bronze', tags=['creatives', 'p4_sync'], views_enabled=false, on_table_exists='drop') }}
+{{ config(materialized='table', schema='bronze', tags=['creatives', 'p4_sync_creative_to_iceberg'], views_enabled=false, on_table_exists='drop') }}
 
 with fs as (
     select component_coding_id, creative_id, status,
