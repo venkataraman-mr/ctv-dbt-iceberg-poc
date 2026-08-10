@@ -339,6 +339,7 @@ merge into iceberg.silver.creative_mapping_translation_hold t
     schema='bronze',
     tags=['creatives', 'p4_sync'],
     views_enabled=false,
+    on_table_exists='drop',
     post_hook=[
       gold_merge_sql,
       change_log_sql,
