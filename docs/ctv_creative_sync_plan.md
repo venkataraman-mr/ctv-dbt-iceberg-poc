@@ -1,11 +1,15 @@
 # Piece 4 — creative sync-back: high-level flow & build plan
 
-Status: **IN PROGRESS — tasks 1/2/3 built & VALIDATED end-to-end on the VM (2026-08-10).** This is the
-design for porting the Databricks `SYNC_CREATIVES_TO_DATABRICKS` job (8 tasks) to our Trino/dbt/Iceberg
-stack, reading from the seeded `tempwork.*_ctv_poc` clones and writing Iceberg `gold.*` / `silver.*`.
-Companion to the seed doc (`docs/ctv_creative_seed.md`). Task 1 (creative) is the heavy one and is now
-fully validated including the watermark read→process→advance loop and the incremental (idempotent) re-run;
-tasks 5 / 4 / 8 and the Piece-5-gated pair (last-seen, occurrence-id) remain.
+Status: **COMPLETE (built) — all 8 tasks ported; the whole job runs end-to-end in one command in the
+Databricks DAG order (2026-08-10).** This is the port of the Databricks `SYNC_CREATIVES_TO_DATABRICKS` job
+(8 tasks) to our Trino/dbt/Iceberg stack, reading the seeded `tempwork.*_ctv_poc` clones and writing Iceberg
+`gold.*` / `silver.*`. Companion to the seed doc (`docs/ctv_creative_seed.md`).
+
+Validation status: **tasks 1 (creative), 2 (first-seen), 3 (dedup), 5 (first-seen-info) VALIDATED** on real
+CTV data; **occurrence-id + task 6 (last-seen)** built and run clean but are **Piece-5-gated** (read the
+empty `gold.digital_gold_occurrence`, so 0-row no-ops until Piece 5); **task 4 (component)** near-empty for
+CTV (smoke-tested) and **task 8 (product-resync)** a no-op with the watermark at `max(change_dt)` (needs
+productmap churn to exercise). The full job = `dbt run --select tag:p4_sync_creative_to_iceberg` (see §11).
 
 ## 1. Shape of the job
 
@@ -102,7 +106,8 @@ the `*_advert_hold_tmp`/`*_hold_creative_tmp` inputs are runtime scratch (create
   `CALL`. Both ported faithfully.
 - **JSON handling:** array-collapse (`collect_set` over window) → Trino `array_agg` over window; struct→JSON via
   `json_format(cast(... as json))`; store as VARCHAR.
-- **`QUALIFY ROW_NUMBER()`** (tasks 5) → Trino supports `QUALIFY`; keep as-is.
+- **`QUALIFY ROW_NUMBER()`** (tasks 5/6/8) → **NOT supported on this Trino build** — rewritten as a
+  `row_number() over (...)` subquery filtered `rn = 1` (see §11).
 - **`vx2_taxonomy.d_advertiser/d_product`** read from the Postgres catalog at sync time (not reference-synced —
   managed Delta didn't sync); component task only.
 
@@ -116,22 +121,38 @@ the `*_advert_hold_tmp`/`*_hold_creative_tmp` inputs are runtime scratch (create
   Piece 5's occurrence schema then.
 - **Reverse-translation hash fidelity** — must be validated against prod before task 1/4/8 are trusted.
 
-## 8. Build order + validation checkpoints
+## 8. Build order + validation status (all BUILT)
 
 1. **Proc clones** (creative + component) — **BUILT & VALIDATED** (`ddl/postgres/piece4_sync_procs_ctv_poc.sql`), pglast-parse-clean; run once on Postgres.
-2. **Task 2 (first-seen)** — **VALIDATED on the VM** (`crtv_sync_first_seen.sql`: MERGE into `gold.creative_first_seen`, watermark advanced, scratch dropped).
-3. **Task 3 (dedup)** — **VALIDATED on the VM** (`crtv_sync_dedupe_map.sql` upsert + `crtv_sync_dedupe_map_delete.sql`; `match_type` from Iceberg `reference.creative_match_type`; `json_format(json_response)`; **no lag** per Venkat — dedup runs `> start`).
-4. **Task 1 (creative)** — **VALIDATED on the VM** (staged `crtv_sync_creative_forsync` → `_raw` → `_revxlate` → `crtv_sync_creative`): reverse-translation vx1/vx2 match prod gold.creative (69 adverts held, expected); both hold loops; 107-col gold MERGE; change log; watermark read (stage-1 proc call) → advance (stage-3, non-held max). Full-history reprocess (33,407 creatives) **and** incremental re-run (≈0 new, idempotent) both confirmed.
-5. **Task 5 (first-seen-info)** — validate parent→family first-seen propagation.
-6. **Task 4 (component)** + **Task 8 (product-resync)** — validate (component ~empty for CTV).
-7. **Task 6 (last-seen)** + **occurrence-id** — build; defer validation to post-Piece-5.
+2. **Task 2 (first-seen)** — **VALIDATED** (`crtv_sync_first_seen.sql`: MERGE → `gold.creative_first_seen`, watermark advanced; **no lag** — see §12). Model: `crtv_sync_first_seen`.
+3. **Task 3 (dedup)** — **VALIDATED** (`crtv_sync_dedupe_map` upsert + `crtv_sync_dedupe_map_delete` delete pass; `match_type` from Iceberg `reference.creative_match_type`; `json_format(json_response)`; **no lag**, `> start`).
+4. **Task 1 (creative)** — **VALIDATED** (`crtv_sync_creative_forsync` → `_raw` → `_revxlate` → `crtv_sync_creative`): reverse-translation vx1/vx2 match prod; 69 adverts held (expected); both hold loops; 107-col gold MERGE; change log; watermark read (stage-1 proc call) → advance (stage-3, non-held max). Full reprocess (33,407) **and** incremental re-run both confirmed.
+5. **Task 5 (first-seen-info)** — **VALIDATED** (`crtv_fsinfo_update`): parent→family earliest first-seen → `gold.creative`; two gold-internal watermarks; `<>`-guarded update-only MERGE; validated (1,796 parents on the incremental run).
+6. **Occurrence-id** (`crtv_occid_update`) — **BUILT, Piece-5-gated** — NO watermark (null-check + `updated_timestamp` floor); matches `gold.digital_gold_occurrence`; 0-row no-op until Piece 5.
+7. **Task 6 (last-seen)** (`crtv_lastseen_update`) — **BUILT, Piece-5-gated** — digital-only; `CTV_LAST_SEEN_DIGITAL`; latest `capture_timestamp` → `gold.creative`; 0-row no-op until Piece 5.
+8. **Task 4 (component)** — **BUILT, near-empty for CTV** (`comp_sync_forsync` → `_explode` → `_revxlate` → `comp_sync`): component proc + `attribute_response` vx2 reverse-translation via the vx2_taxonomy + component/mattress maps; gold MERGE + hold + `CTV_SYNC_COMPONENT`. Smoke-tested; the vx2 rebuild + lookup column names need real component data (§10).
+9. **Task 8 (product-resync)** — **BUILT** (`crtv_product_resync_affected` → `_prim` ∥ `_sec` → `crtv_product_resync`): productmap `change_dt` watermark; reuses stage-2b md5; MERGE vx1/vx2 + resync log. **Split into 4 models** and **productmap streamed** (never hashed) to fit Trino's memory + 150-stage limits; watermark **initialized to `max(change_dt)`** (no backlog to resync).
 
-## 9. Model pattern + build learnings (from task 2)
+**DAG (reconciled to the Databricks job, 2026-08-10):**
+```
+(crtv_sync_dedupe_map → crtv_sync_dedupe_map_delete)  ∥  crtv_sync_first_seen
+        → crtv_sync_creative_forsync → _raw → _revxlate → crtv_sync_creative
+        → crtv_fsinfo_update → crtv_occid_update → crtv_lastseen_update
+        → ( comp_sync_forsync → _explode → _revxlate → comp_sync )
+          ∥ ( crtv_product_resync_affected → _prim ∥ _sec → crtv_product_resync )
+```
+Each task's ENTRY model `-- depends_on:` the upstream task's EXIT model; dbt runs the whole thing in this
+order (roots and leaves run in parallel with ≥2 threads). All models tagged `p4_sync_creative_to_iceberg`.
 
-The Piece-4 sync model shape (each task follows it): compute `watermark_ts_begin` → model body reads the
-source with `updated_timestamp > start − 1 min UTC` and casts to the gold schema, materializing a
-**candidate** table (`schema='bronze'`, tag `p4_sync`) → **post-hooks** MERGE the candidate into the gold
-target and advance the watermark → the candidate is dropped by the `on-run-end` `p4_sync` cleanup.
+## 9. Model pattern + build learnings
+
+The Piece-4 sync model shape (each task follows it): read the watermark (`watermark_ts_begin`, or the
+stage-1 proc-call pre-hook for the proc-driven tasks) → model body reads the source with
+`updated_timestamp > start` (UTC; **no lag** — see §12) and casts to the gold schema, materializing a
+**candidate** table (`schema='bronze'`, tag `p4_sync_creative_to_iceberg`) → **post-hooks** MERGE the
+candidate into the gold target and advance the watermark → the candidate is dropped by the `on-run-end`
+`p4_sync_creative_to_iceberg` cleanup (re-enabled 2026-08-10; opt out with
+`--vars 'keep_p4_sync_creative_to_iceberg_tables: true'`).
 
 - **`schema='bronze'` is the candidate's location, not the target.** The gold target is written by the
   post-hook MERGE (target named explicitly); dbt only "materializes" the staging batch.
@@ -193,6 +214,66 @@ of which apply to every remaining sync task:
   reverse-translate are held; ~1,071 creatives have a null vx1 but the non-advert ones flow through. Held
   rows are parked in `silver.creative_mapping_translation_hold`, kept out of gold this run, and re-read next
   run via the stage-1 advert-hold pushback.
+
+## 11. Tasks 5 / occ-id / 6 / 8 / 4 + DAG + platform-limit learnings (2026-08-10)
+
+- **`QUALIFY` is not supported on this Trino build.** Every per-partition "pick one" (first-seen-info earliest,
+  last-seen latest, occ-id/product-resync dedup) uses a `row_number() over (...)` in a subquery filtered `rn = 1`.
+- **Two gold-internal watermarks with a new advance macro.** First-seen-info reads changes from BOTH
+  `gold.creative_first_seen` and `gold.creative`; last-seen from `gold.digital_gold_occurrence`. Advance via
+  `watermark_ts_advance_from_source(name, rel, ts_col)` — reads `max(ts_col)` from the source filtered by the
+  watermark's OWN stored end (no start literal to escape into the hook); runs post-MERGE (source unmodified by
+  that MERGE → exact changed-set max; for the self-written source it sweeps past this run's own writes, intended).
+- **Occurrence-id has NO watermark.** The real job self-limits on `first_seen_occurrence_id IS NULL` (+ an
+  `updated_timestamp` date floor) — once set, a creative is never reprocessed. `CTV_FIRST_SEEN_OCC_ID` is seeded
+  but UNUSED (kept for inventory symmetry).
+- **The `<>` MERGE guard is NULL-unsafe (faithful).** First-seen-info / last-seen only update when the incoming
+  value differs; a row whose target field is NULL won't update — same as Databricks.
+- **Trino's 150-STAGE limit → split heavy models.** Trino doesn't materialize CTEs, so a CTE referenced N times
+  re-plans its subtree N times. The single-model product-resync hit 284 stages. Fix: **split into staged models**
+  (`_affected` / `_prim` / `_sec` / writer for task 8; `forsync` / `explode` / `revxlate` / writer for task 4),
+  each a small query reading physical bronze tables.
+- **The huge `productmap` must be STREAMED, never hashed.** A `LEFT JOIN productmap` builds a ~3.6 GB hash on the
+  (huge) build side → `EXCEEDED_LOCAL_MEMORY_LIMIT`. Fix: `productmap` is only ever (a) a filtered scan for change
+  detection and (b) a semi-join `where mapping_hash in (<needed hashes>)` (`pm_small`) — Trino streams it and
+  hashes the small side. Same pattern used for `d_product` in the component task.
+- **Product-resync watermark must start at `max(change_dt)`, not 1900.** A fresh deploy has no resync backlog
+  (task 1 already translated everything against the current productmap), and `change_dt >= 1900` would select the
+  ENTIRE productmap → memory blow-up. One-time init in ddl/08.
+- **`json_object` vs `map` for building JSON objects.** To emit a JSON *object* (named keys) that array-aggregates
+  cleanly, build each element as `cast(map(array[keys], array[values]) as json)` (component vx2 rebuild). Trino
+  can't cast a timestamp to json (change-log), and `json_parse(x)` inside `json_object` yields json-typed values
+  it then fails to serialize — so json string columns are passed as VARCHAR.
+- **DAG reconciled to the Databricks job.** Each task's entry model `-- depends_on:` the upstream task's exit
+  model (see §8). `-- depends_on: {{ ref('x') }}` is a real dependency (dbt evaluates `ref()` at render even
+  inside a `--` comment) with no effect on the emitted SQL — it's how a model whose only real reads are
+  hook-written/literal tables still gets ordered.
+- **Tag + cleanup.** Tag renamed `p4_sync` → `p4_sync_creative_to_iceberg` (job naming); the `on-run-end` scratch
+  cleanup is re-enabled (drops the bronze candidates after a clean run — the `jobwork` DROP analog).
+
+## 12. Run commands (single-task + full DAG)
+
+**Full job** (all 8 tasks in DAG order; roots/leaves parallelize with ≥2 threads):
+```
+docker compose run --rm dbt dbt run --select tag:p4_sync_creative_to_iceberg
+```
+Prereqs: `CTV_PRODUCT_RESYNC` initialized to `max(change_dt)` (ddl/08 one-time UPDATE); the two Postgres proc
+clones + the tempwork seed already applied.
+
+**Single task** — chained tasks must run their whole chain (the scratch is dropped each run); single-model tasks
+read the already-built gold tables so the final model alone suffices:
+```
+# creative (task 1):     dbt run --select crtv_sync_creative_forsync crtv_sync_creative_raw crtv_sync_creative_revxlate crtv_sync_creative
+# first-seen (task 2):   dbt run --select crtv_sync_first_seen
+# dedup (task 3):        dbt run --select crtv_sync_dedupe_map crtv_sync_dedupe_map_delete
+# first-seen-info (5):   dbt run --select crtv_fsinfo_update
+# occurrence-id:         dbt run --select crtv_occid_update
+# last-seen (task 6):    dbt run --select crtv_lastseen_update
+# component (task 4):    dbt run --select comp_sync_forsync comp_sync_explode comp_sync_revxlate comp_sync
+# product-resync (8):    dbt run --select crtv_product_resync_affected crtv_product_resync_prim crtv_product_resync_sec crtv_product_resync
+```
+For dev inspection of a chained task's intermediates, add `--vars 'keep_p4_sync_creative_to_iceberg_tables: true'`
+so the `on-run-end` cleanup doesn't drop them. (`+model` also works but pulls cross-task ancestors via the DAG.)
 
 ## Decisions (resolved 2026-08-09)
 

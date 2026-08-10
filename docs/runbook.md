@@ -235,11 +235,12 @@ restricted to our CTV clones + their related parents (dedupe_map joined back to 
 non-CTV child of a CTV parent is never loaded. Descriptor fields (provider/type/media, etc.) are sourced from
 the clone staging/first_seen for our creatives and from prod for external parents.
 
-## 4g. Piece 4 — creative sync-back (Trino/dbt-native) — IN PROGRESS (tasks 1/2/3 VALIDATED 2026-08-10)
+## 4g. Piece 4 — creative sync-back (Trino/dbt-native) — COMPLETE (all 8 built; 1/2/3/5 VALIDATED 2026-08-10)
 Ports the Databricks `SYNC_CREATIVES_TO_DATABRICKS` job (8 tasks) reading the seeded `tempwork.*_ctv_poc`
 clones → Iceberg `gold.*`/`silver.*`. Every Databricks Delta `table_changes` read becomes a **timestamp
 (column) watermark** scan — Trino `table_changes` is append-only, and these gold tables are MERGE-written.
-UTC + 1-min no-miss lag; idempotent MERGEs. Full plan + per-task map + learnings: **`docs/ctv_creative_sync_plan.md`**.
+UTC, **no lag** (`> start`); idempotent MERGEs. Full plan + per-task map + all learnings + commands:
+**`docs/ctv_creative_sync_plan.md` §8–12**.
 
 Setup (once):
 ```bash
@@ -249,30 +250,37 @@ Setup (once):
 docker exec -i trino trino --catalog iceberg -f /dev/stdin < ddl/08_silver_watermark_control_piece4.sql
 docker exec -i trino trino --execute "ALTER TABLE iceberg.gold.creative_first_seen ADD COLUMN provider_campaign_landing_page VARCHAR"
 docker exec -i trino trino --execute "ALTER TABLE iceberg.gold.creative ADD COLUMN first_seen_provider_campaign_landing_page VARCHAR"
+# Product-resync watermark must NOT start at 1900 (else full-productmap sweep -> OOM); init to max(change_dt):
+docker exec -i trino trino --execute "UPDATE iceberg.silver.watermark_control SET start_timestamp = end_timestamp, end_timestamp = cast((SELECT max(change_dt) FROM iceberg.productcentral.productmap) as timestamp(6) with time zone), transaction_status='INIT', updated_timestamp=cast(current_timestamp as timestamp(6) with time zone) WHERE watermark_name='CTV_PRODUCT_RESYNC'"
 ```
-Run / verify:
+Run the FULL job (all 8 tasks in the reconciled Databricks DAG order; roots/leaves parallelize with ≥2 threads):
 ```bash
-# task 2 (first-seen) and task 3 (dedup)
-docker compose run --rm dbt dbt run --select crtv_sync_first_seen
-docker compose run --rm dbt dbt run --select crtv_sync_dedupe_map crtv_sync_dedupe_map_delete
-# task 1 (creative) — run the WHOLE staged chain (proc read -> transforms -> gold write -> advance)
-docker compose run --rm dbt dbt run --select +crtv_sync_creative
-docker exec -i trino trino --execute "SELECT * FROM iceberg.bronze.crtv_sync_creative"   # merged ~33338 / held 69
-docker exec -i trino trino --execute "SELECT watermark_name,start_timestamp,end_timestamp,transaction_status FROM iceberg.silver.watermark_control WHERE watermark_name='CTV_SYNC_CREATIVE'"
-# to force a full-history reprocess, first reset the watermark to base:
-#   UPDATE iceberg.silver.watermark_control SET start_timestamp=NULL, end_timestamp=TIMESTAMP '1900-01-01 00:00:00 UTC', transaction_status='INIT' WHERE watermark_name='CTV_SYNC_CREATIVE'
+docker compose run --rm dbt dbt ls  --select tag:p4_sync_creative_to_iceberg --output name   # 18 models
+docker compose run --rm dbt dbt run --select tag:p4_sync_creative_to_iceberg                  # end-to-end
 ```
-**Model pattern (all sync tasks):** a candidate table (`schema='bronze'`, tag `p4_sync`, casts to the gold schema)
-→ post-hooks MERGE candidate → gold + advance the watermark via `watermark_ts_finish_from_relation` (a **run-time
-template-string** hook — post_hook is captured at parse, so run-time values can't be conditionally appended; that
-was a bug, now fixed) → `on-run-end` drops the `p4_sync` scratch. The watermark READ is either `watermark_ts_begin`
-(first-seen/dedup, which filter in the model body) or the stage-1 proc-call pre-hook (creative, which filters
-server-side in the Postgres proc). **In every post-hook, reference relations as LITERAL strings** —
+Or run a SINGLE task (chained tasks need the whole chain — scratch is dropped each run; single-model tasks read
+already-built gold tables so the final model alone suffices):
+```bash
+# creative (1):  dbt run --select crtv_sync_creative_forsync crtv_sync_creative_raw crtv_sync_creative_revxlate crtv_sync_creative
+# first-seen(2): dbt run --select crtv_sync_first_seen        # dedup(3): crtv_sync_dedupe_map crtv_sync_dedupe_map_delete
+# fs-info (5):   dbt run --select crtv_fsinfo_update          # occ-id: crtv_occid_update   # last-seen(6): crtv_lastseen_update
+# component (4): dbt run --select comp_sync_forsync comp_sync_explode comp_sync_revxlate comp_sync
+# resync (8):    dbt run --select crtv_product_resync_affected crtv_product_resync_prim crtv_product_resync_sec crtv_product_resync
+# dev inspection of a chained task's intermediates: add --vars 'keep_p4_sync_creative_to_iceberg_tables: true'
+```
+**Model pattern (all sync tasks):** a candidate table (`schema='bronze'`, tag `p4_sync_creative_to_iceberg`, casts
+to the gold schema) → post-hooks MERGE candidate → gold + advance the watermark (`watermark_ts_finish_from_relation`
+or `watermark_ts_advance_from_source`, run-time template-string hooks) → `on-run-end` drops the scratch (re-enabled;
+opt out with the keep-var). The watermark READ is either `watermark_ts_begin` (first-seen/dedup/fs-info/last-seen,
+which filter in the model body) or the stage-1 proc-call pre-hook (creative/component, server-side in the proc);
+occurrence-id has NO watermark (null-check + floor). **In every post-hook, reference relations as LITERAL strings** —
 `ref()`/`source()`/`this` re-render at run to the profile default schema (`silver`) and break (the Piece-3 trap).
-**Status:** procs cloned + watermarks seeded; **tasks 1 (creative), 2 (first-seen), 3 (dedup) VALIDATED end-to-end**
-(task 1 incl. the read→advance loop + an idempotent incremental re-run; 69 adverts held, expected); tasks 5 → 4/8
-next; the two Piece-5-dependent tasks (last-seen, occurrence-id) built later (validate after Piece 5). Archive
-parked (future `ca_flag`).
+Heavy tasks (component, product-resync) are **split into staged models** and `productmap`/`d_product` are **streamed
+via semi-join** (never hashed) to fit Trino's memory + 150-stage limits. `QUALIFY` is unsupported → `row_number()`
+subquery. **Status:** all 8 tasks built; **1/2/3/5 VALIDATED**; occurrence-id + task 6 (last-seen) Piece-5-gated
+(0-row no-ops until Piece 5); task 4 (component) near-empty smoke-test; task 8 (product-resync) no-op at
+`max(change_dt)`. DAG reconciled to the Databricks job; tag renamed; scratch cleanup re-enabled; first-seen 1-min lag
+removed. Archive parked (future `ca_flag`).
 
 ## 5. Prod Postgres — reachability RESOLVED, Trino catalog WIRED (2026-07-26)
 Cross-cloud reachability was BLOCKED; DevOps opened the path (verified: `bash scripts/pg_connectivity_test.sh`

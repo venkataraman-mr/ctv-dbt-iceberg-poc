@@ -46,7 +46,7 @@ Use a second VS Code window connected via **Remote-SSH** to the VM for *running 
 (docker/dbt/logs) — not for editing the same files, to avoid divergence between the two copies.
 
 ## Status
-**Foundation + Reference sync (hive + UC) + Postgres + CTV ingestion (Piece 1) + Piece 3 (Job A creative push + Job B first-seen/occurrence-summary) VALIDATED & concurrency-safe. Piece 4 clone-seeding prerequisite VALIDATED (Mode 1; Mode 2 pending daily ingestion). Piece 4 sync-back IN PROGRESS: 8-task job planned, proc clones + watermark seeds built, tasks 1 (creative), 2 (first-seen), 3 (dedup) VALIDATED end-to-end on the VM (task 1 incl. watermark read→advance loop + idempotent re-run); tasks 5/4/8 + Piece-5-gated pair remaining. Piece 5 remaining.**
+**Foundation + Reference sync (hive + UC) + Postgres + CTV ingestion (Piece 1) + Piece 3 (Job A creative push + Job B first-seen/occurrence-summary) VALIDATED & concurrency-safe. Piece 4 clone-seeding prerequisite VALIDATED (Mode 1; Mode 2 pending daily ingestion). Piece 4 sync-back COMPLETE (built): all 8 tasks ported + running end-to-end in DAG order (`dbt run --select tag:p4_sync_creative_to_iceberg`); tasks 1/2/3/5 VALIDATED, occurrence-id + last-seen Piece-5-gated, component near-empty smoke-test, product-resync no-op at max(change_dt). NEXT: Piece 5 (gold occurrence flow).**
 
 *Foundation (2026-07-22):* the full stack (nessie · trino · dbt · ingestion) builds and runs on the
 EC2 VM, and the two-engine smoke test passes — Trino and PyIceberg both read/write one Iceberg table
@@ -131,21 +131,22 @@ for our creatives, prod for external parents. Real `creatives.*`/`ml_results.*` 
 `creative_archive` and the `reference.*`/`config.*`/`productcentral.*` lookups are not cloned. **Mode 1 (new
 data) validated on the clones; Mode 2 pending the first daily-ingestion run.** Details in `docs/ctv_creative_seed.md`.
 
-*Piece 4 — sync-back, in progress (2026-08-10):* porting the Databricks `SYNC_CREATIVES_TO_DATABRICKS`
+*Piece 4 — sync-back, COMPLETE (built) (2026-08-10):* the Databricks `SYNC_CREATIVES_TO_DATABRICKS`
 job (8 tasks: dedup ∥ first-seen → creative → first-seen-info → occurrence-id → last-seen → component ∥
-product-resync) to Trino/dbt-native, reading the seeded `tempwork.*_ctv_poc` clones → Iceberg `gold.*`/`silver.*`.
-The two Postgres `get_changes` procs are cloned+retargeted (`ddl/postgres/piece4_sync_procs_ctv_poc.sql`);
-10 timestamp watermarks seeded (`ddl/08`); every Databricks Delta `table_changes` read becomes a **column
-(timestamp) watermark** scan (Trino `table_changes` is append-only) with UTC discipline + a 1-min no-miss lag.
-**Tasks 2 (first-seen), 3 (dedup), and 1 (creative) are VALIDATED end-to-end on the VM.** Task 1 (the heavy
-one) is staged — `crtv_sync_creative_forsync` (proc CALL) → `_raw` (schema collapse) → `_revxlate` (vx0→vx1/vx2
-reverse translation) → `crtv_sync_creative` (107-col gold MERGE + change log + both hold loops + watermark);
-its watermark read is the stage-1 proc call and the advance is a stage-3 non-held-max hook, confirmed with a
-full-history reprocess and an idempotent incremental re-run (69 adverts held, expected). Archive is parked; the
-two Piece-5-dependent tasks (last-seen, occurrence-id) are built later. Full plan + task-1 learnings (literal
-hook relations, Trino MERGE bare LHS, json_object, on_table_exists): `docs/ctv_creative_sync_plan.md` §9–10.
+product-resync) is fully ported to Trino/dbt-native, reading the seeded `tempwork.*_ctv_poc` clones → Iceberg
+`gold.*`/`silver.*`, and the **whole job runs end-to-end in DAG order** with one command:
+`dbt run --select tag:p4_sync_creative_to_iceberg`. The two Postgres `get_changes` procs are cloned+retargeted;
+every Databricks Delta `table_changes` read becomes a **column (timestamp) watermark** scan (Trino
+`table_changes` is append-only), UTC, **no lag** (`> start`; dedup + first-seen both). **Tasks 1 (creative),
+2 (first-seen), 3 (dedup), 5 (first-seen-info) VALIDATED.** Occurrence-id + task 6 (last-seen) are built but
+**Piece-5-gated** (read the empty `gold.digital_gold_occurrence` → 0-row no-ops until Piece 5); task 4
+(component, near-empty for CTV) and task 8 (product-resync, no-op at `max(change_dt)`) are built and
+smoke-tested. Heavy tasks are **split into staged models** and the huge `productmap` is **streamed via
+semi-join** (never hashed) to fit Trino's memory + 150-stage limits. The dbt DAG is **reconciled to the
+Databricks job**; scratch is cleaned up on-run-end. Full plan + all learnings + single-task/full-job commands:
+`docs/ctv_creative_sync_plan.md` §8–12.
 
-Next up: finish the Piece 4 sync tasks (5 → 4/8), then Piece 5. Some library upgrades are parked as a
-future action item (`docs/runbook.md` §6).
+Next up: **Piece 5** (gold occurrence flow) — which also lights up occurrence-id + last-seen. Some library
+upgrades are parked as a future action item (`docs/runbook.md` §6).
 
 **Resuming in a new window?** Start with `docs/runbook.md`, `docs/ctv_ingestion.md`, and `scripts/vm_setup.md`.
