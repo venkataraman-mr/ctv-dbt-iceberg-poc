@@ -24,6 +24,11 @@
 {%- set tgt = 'iceberg.gold.creative_first_seen' -%}
 {%- set self_rel = this.database ~ '.bronze.' ~ this.identifier -%}
 
+{#- Data-provider list (Databricks data_provider_list_to_sync_from_psql = '2,11,13,16,18'):
+    BIS (2), TV (11), PlayOn (13), Social (16), BIS CTV (18). Override:
+    dbt run ... --vars 'p4_first_seen_provider_ids: "2, 11, 13, 16, 18"'. -#}
+{%- set provider_ids = var('p4_first_seen_provider_ids', '2, 11, 13, 16, 18') -%}
+
 {%- set wm = watermark_ts_begin(wm_name) -%}
 {%- set start_ts = wm.start_ts -%}
 {%- set start_ts_naive = (start_ts | string)[:19] if start_ts is not none else '1900-01-01 00:00:00' -%}
@@ -35,6 +40,7 @@
     select cast(max(updated_timestamp) as varchar) as m
     from {{ src }}
     where updated_timestamp > timestamp '{{ start_ts_naive }}' - interval '1' minute
+      and provider_id in ({{ provider_ids }})
   {%- endset -%}
   {%- set new_end_ts = run_query(maxq).rows[0]['m'] -%}
 {%- endif -%}
@@ -114,3 +120,4 @@ select
     cast(provider_campaign_landing_page as varchar)                   as provider_campaign_landing_page
 from {{ src }}
 where updated_timestamp > timestamp '{{ start_ts_naive }}' - interval '1' minute
+  and provider_id in ({{ provider_ids }})
