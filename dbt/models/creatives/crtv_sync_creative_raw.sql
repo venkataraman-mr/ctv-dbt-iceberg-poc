@@ -4,8 +4,14 @@
   (creative_id, creative_url_hash): per-product/competitor/celebrity forsync rows collapsed (array_agg
   for secondary_products / attribution_competitor / attribution_celebrity; max for primary_product_id),
   provider_code / source_channel resolved from the Iceberg reference dims. Faithful port of
-  PsqlCrtvSync.schema_process (collect_set-over-window -> GROUP BY here). json cols carried as Trino json
-  (stage 2b reverse-translates; stage 3 json_format()s into gold). Depends on stage 1 so the proc runs first.
+  PsqlCrtvSync.schema_process (collect_set-over-window -> GROUP BY here).
+
+  The 8 jsonb columns arrive as Trino json (Iceberg has no json type), so they are json_format()'d to
+  VARCHAR here: the 3 multi-valued ones (secondary_products / attribution_competitor / attribution_celebrity)
+  as a JSON ARRAY string; the 5 single-valued ones (custom_attributes / creative_payload /
+  machine_learning_payload / print_matching_ads / print_ad_images) as a JSON object string. Stage 2b
+  re-parses secondary_products for reverse translation; stage 3 writes them to gold (VARCHAR). Depends on
+  stage 1 so the proc runs first.
   VALIDATE ON VM: row count == distinct creatives from stage 1 (~33,407); provider_code/source_channel resolved.
 #}
 -- depends_on: {{ ref('crtv_sync_creative_forsync') }}
@@ -33,7 +39,7 @@ select
     arbitrary(c.creative_tier_id) as creative_tier_id,
     arbitrary(c.primary_language_code) as primary_language_code,
     max(c.primary_product_id) as primary_product_id,
-    array_agg(c.secondary_products) filter (where c.secondary_products is not null) as secondary_products,
+    json_format(cast(array_agg(c.secondary_products) filter (where c.secondary_products is not null) as json)) as secondary_products,
     arbitrary(c.mr_company_id) as mr_company_id,
     arbitrary(c.classification_type) as classification_type,
     arbitrary(c.classified_by_user_id) as classified_by_user_id,
@@ -52,13 +58,13 @@ select
     arbitrary(c.attribution_other_details) as attribution_other_details,
     arbitrary(c.attribution_description) as attribution_description,
     arbitrary(c.attribution_hashtag) as attribution_hashtag,
-    array_agg(c.attribution_competitor) filter (where c.attribution_competitor is not null) as attribution_competitor,
-    array_agg(c.attribution_celebrity) filter (where c.attribution_celebrity is not null) as attribution_celebrity,
+    json_format(cast(array_agg(c.attribution_competitor) filter (where c.attribution_competitor is not null) as json)) as attribution_competitor,
+    json_format(cast(array_agg(c.attribution_celebrity) filter (where c.attribution_celebrity is not null) as json)) as attribution_celebrity,
     arbitrary(c.attribution_slogan_tagline) as attribution_slogan_tagline,
     arbitrary(c.attribution_revision_description) as attribution_revision_description,
     arbitrary(c.attribution_comments) as attribution_comments,
     arbitrary(c.attribution_creative_tags) as attribution_creative_tags,
-    arbitrary(c.custom_attribute) as custom_attributes,
+    json_format(arbitrary(c.custom_attribute)) as custom_attributes,
     arbitrary(c.attribution_timestamp) as attribution_timestamp,
     arbitrary(c.attribution_by_user_id) as attribution_by_user_id,
     arbitrary(c.attribution_status) as attribution_status,
@@ -100,8 +106,8 @@ select
     arbitrary(c.occurrence_description) as occurrence_description,
     arbitrary(c.historical_creative_md5) as historical_creative_md5,
     arbitrary(c.legacy_creative_id) as legacy_creative_id,
-    arbitrary(c.creative_payload) as creative_payload,
-    arbitrary(c.machine_learning_payload) as machine_learning_payload,
+    json_format(arbitrary(c.creative_payload)) as creative_payload,
+    json_format(arbitrary(c.machine_learning_payload)) as machine_learning_payload,
     arbitrary(c.print_los_id) as print_los_id,
     arbitrary(c.print_ad_type_id) as print_ad_type_id,
     arbitrary(c.print_ad_nli) as print_ad_nli,
@@ -113,8 +119,8 @@ select
     arbitrary(c.print_null_cost_comments) as print_null_cost_comments,
     arbitrary(c.print_recalculate_cost) as print_recalculate_cost,
     arbitrary(c.is_resegment) as is_resegment,
-    arbitrary(c.print_matching_ads) as print_matching_ads,
-    arbitrary(c.print_ad_images) as print_ad_images,
+    json_format(arbitrary(c.print_matching_ads)) as print_matching_ads,
+    json_format(arbitrary(c.print_ad_images)) as print_ad_images,
     arbitrary(c.product_mapping_status) as product_mapping_status,
     arbitrary(c.keywords) as keywords,
     arbitrary(c.is_reclassified) as is_reclassified,
