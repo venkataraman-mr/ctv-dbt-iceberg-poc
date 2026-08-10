@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS iceberg.gold.creative (
     first_seen_provider_advertiser_name    VARCHAR,
     first_seen_provider_product_id         BIGINT,
     first_seen_provider_product_name       VARCHAR,
+    first_seen_provider_campaign_landing_page VARCHAR,   -- Piece 4: written by the creative sync (prod has it; was missing here)
     first_seen_market_id                   INTEGER,
     first_seen_market_name                 VARCHAR,
     first_seen_daypart_id                  INTEGER,
@@ -191,6 +192,7 @@ WITH (
 );
 -- NOTE: tables already created on the VM need the retrofit (Iceberg ADD COLUMN is metadata-only):
 --   ALTER TABLE iceberg.gold.creative_first_seen ADD COLUMN provider_campaign_landing_page VARCHAR;
+--   ALTER TABLE iceberg.gold.creative ADD COLUMN first_seen_provider_campaign_landing_page VARCHAR;
 
 CREATE TABLE IF NOT EXISTS iceberg.gold.digital_deployment_chain (
     deployment_chain_id                    BIGINT,

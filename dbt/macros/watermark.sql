@@ -105,9 +105,9 @@
     already-built candidate relation `rel` and advances the window: start := old end, end := that max.
     No rows in the candidate -> no-op (watermark unchanged). rel/ts_col are embedded as literals by the
     caller; the macro re-renders at run (execute=True) and returns the UPDATE. -#}
-{% macro watermark_ts_finish_from_relation(watermark_name, rel, ts_col='updated_timestamp') %}
+{% macro watermark_ts_finish_from_relation(watermark_name, rel, ts_col='updated_timestamp', where_sql='true') %}
   {% if not execute %}{{ return("select 1") }}{% endif %}
-  {% set q %}select cast(max({{ ts_col }}) as varchar) as m from {{ rel }}{% endset %}
+  {% set q %}select cast(max({{ ts_col }}) as varchar) as m from {{ rel }} where {{ where_sql }}{% endset %}
   {% set m = run_query(q).rows[0]['m'] %}
   {% if m is none %}{{ return("select 1") }}{% endif %}
   {{ return(
