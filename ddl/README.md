@@ -14,12 +14,15 @@ once per environment (idempotent: every statement is `IF NOT EXISTS`).
 | 03 | `03_silver_watermark_control.sql` | `silver.watermark_control` (version + timestamp watermarks, one shared table) | dbt watermark macros |
 | 04 | `04_bronze_creative.sql` | `bronze.creative_unique_urls`, `creative_autochaff`, `missing_digital_occurrence_for_summary` | Piece 3 creative push |
 | 05 | `05_silver_pieces_3_5.sql` | `silver.creative_dedupe_map`, `digital_staging_occurrence`, `component_coding_translation_hold`, `creative_mapping_translation_hold`, `creative_product_translation_resync_log`, `gold_creative_change_log` | Pieces 4–5 dbt models |
-| 06 | `06_gold_creative.sql` | `gold.creative` (106 cols), `creative_first_seen`, `component_coding`, `digital_deployment_chain` (+`_role`, `_mediator`), `digital_spend_availability` | Piece 4 sync-back |
+| 06 | `06_gold_creative.sql` | `gold.creative` (107 cols), `creative_first_seen`, `component_coding`, `digital_deployment_chain` (+`_role`, `_mediator`), `digital_spend_availability` | Piece 4 sync-back |
 | 07 | `07_gold_occurrence.sql` | `gold.digital_gold_occurrence` (partitioned by `capture_month`) | Piece 5 occurrence gate |
 | 08 | `08_silver_watermark_control_piece4.sql` | 10 Piece-4 sync-back **timestamp** watermarks in `silver.watermark_control` (idempotent; 1900-01-01 base) | Piece 4 sync-back dbt models |
 
-Note (ddl/06): `gold.creative_first_seen` gained `provider_campaign_landing_page` (the first-seen sync writes it;
-prod has it). Already-created VM tables need `ALTER TABLE iceberg.gold.creative_first_seen ADD COLUMN provider_campaign_landing_page VARCHAR;`
+Note (ddl/06): two columns were added to match prod (the sync writes them). `gold.creative_first_seen` gained
+`provider_campaign_landing_page`; `gold.creative` gained `first_seen_provider_campaign_landing_page` (bringing it
+to 107 cols). Already-created VM tables need the metadata-only retrofits:
+`ALTER TABLE iceberg.gold.creative_first_seen ADD COLUMN provider_campaign_landing_page VARCHAR;` and
+`ALTER TABLE iceberg.gold.creative ADD COLUMN first_seen_provider_campaign_landing_page VARCHAR;`
 
 Scripts 04–07 were generated from the Databricks `table_ddl` notebooks (`bronze.py`/`silver.py`/`gold.py`)
 by the Spark→Trino mapping in each file's header (STRING→VARCHAR, TIMESTAMP→`TIMESTAMP(6) WITH TIME ZONE`,

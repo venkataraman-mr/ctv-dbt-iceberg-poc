@@ -1,9 +1,11 @@
 # Piece 4 — creative sync-back: high-level flow & build plan
 
-Status: **PLAN (for review) — no code yet.** This is the design for porting the Databricks
-`SYNC_CREATIVES_TO_DATABRICKS` job (8 tasks) to our Trino/dbt/Iceberg stack, reading from the seeded
-`tempwork.*_ctv_poc` clones and writing Iceberg `gold.*` / `silver.*`. Companion to the seed doc
-(`docs/ctv_creative_seed.md`).
+Status: **IN PROGRESS — tasks 1/2/3 built & VALIDATED end-to-end on the VM (2026-08-10).** This is the
+design for porting the Databricks `SYNC_CREATIVES_TO_DATABRICKS` job (8 tasks) to our Trino/dbt/Iceberg
+stack, reading from the seeded `tempwork.*_ctv_poc` clones and writing Iceberg `gold.*` / `silver.*`.
+Companion to the seed doc (`docs/ctv_creative_seed.md`). Task 1 (creative) is the heavy one and is now
+fully validated including the watermark read→process→advance loop and the incremental (idempotent) re-run;
+tasks 5 / 4 / 8 and the Piece-5-gated pair (last-seen, occurrence-id) remain.
 
 ## 1. Shape of the job
 
@@ -116,12 +118,13 @@ the `*_advert_hold_tmp`/`*_hold_creative_tmp` inputs are runtime scratch (create
 
 ## 8. Build order + validation checkpoints
 
-1. **Proc clones** (creative + component) — **BUILT** (`ddl/postgres/piece4_sync_procs_ctv_poc.sql`), pglast-parse-clean; run once on Postgres.
-2. **Task 2 (first-seen)** — **VALIDATED on the VM** (`crtv_sync_first_seen.sql`: MERGE into `gold.creative_first_seen`, watermark advanced, scratch dropped). **Task 3 (dedup)** — next.
-3. **Task 1 (creative)** — the heavy one; validate reverse-translation hash + both hold loops + gold MERGE.
-4. **Task 5 (first-seen-info)** — validate parent→family first-seen propagation.
-5. **Task 4 (component)** + **Task 8 (product-resync)** — validate (component ~empty for CTV).
-6. **Task 6 (last-seen)** + **occurrence-id** — build; defer validation to post-Piece-5.
+1. **Proc clones** (creative + component) — **BUILT & VALIDATED** (`ddl/postgres/piece4_sync_procs_ctv_poc.sql`), pglast-parse-clean; run once on Postgres.
+2. **Task 2 (first-seen)** — **VALIDATED on the VM** (`crtv_sync_first_seen.sql`: MERGE into `gold.creative_first_seen`, watermark advanced, scratch dropped).
+3. **Task 3 (dedup)** — **VALIDATED on the VM** (`crtv_sync_dedupe_map.sql` upsert + `crtv_sync_dedupe_map_delete.sql`; `match_type` from Iceberg `reference.creative_match_type`; `json_format(json_response)`; **no lag** per Venkat — dedup runs `> start`).
+4. **Task 1 (creative)** — **VALIDATED on the VM** (staged `crtv_sync_creative_forsync` → `_raw` → `_revxlate` → `crtv_sync_creative`): reverse-translation vx1/vx2 match prod gold.creative (69 adverts held, expected); both hold loops; 107-col gold MERGE; change log; watermark read (stage-1 proc call) → advance (stage-3, non-held max). Full-history reprocess (33,407 creatives) **and** incremental re-run (≈0 new, idempotent) both confirmed.
+5. **Task 5 (first-seen-info)** — validate parent→family first-seen propagation.
+6. **Task 4 (component)** + **Task 8 (product-resync)** — validate (component ~empty for CTV).
+7. **Task 6 (last-seen)** + **occurrence-id** — build; defer validation to post-Piece-5.
 
 ## 9. Model pattern + build learnings (from task 2)
 
@@ -146,6 +149,50 @@ target and advance the watermark → the candidate is dropped by the `on-run-end
 
 Each step: dbt models + any watermark seed rows, run on the VM, verify counts/keys, then commit (commands
 provided for manual push per your workflow).
+
+## 10. Task-1 (creative) build learnings (2026-08-10)
+
+Task 1 is staged into four dbt models — `crtv_sync_creative_forsync` (stage 1: rebuild the advert-hold
+clone from `silver.creative_mapping_translation_hold`, then `CALL` the proc), `_raw` (stage 2a: schema
+collapse to one row per creative, all 8 jsonb cols → VARCHAR via `json_format`), `_revxlate` (stage 2b:
+vx0→vx1/vx2 reverse translation + competitor vx2 + `holding_flag`), and `crtv_sync_creative` (stage 3:
+107-col gold MERGE + change log + both hold loops + watermark advance, all as post-hooks). Findings, most
+of which apply to every remaining sync task:
+
+- **The watermark READ for task 1 is the stage-1 proc call, not a `watermark_ts_begin`.** Task 1 filters
+  server-side in the Postgres proc, so `p4_creative_proc_call('CTV_SYNC_CREATIVE')` reads the watermark's
+  `end_timestamp` and passes it into the proc as the lower bound (`updated_timestamp >= flag`). First-seen
+  needs `watermark_ts_begin` only because it filters in the model body. Loop: read (stage 1) → advance
+  (stage 3 `watermark_ts_finish_from_relation`, over NON-held rows only, mirroring Databricks
+  `get_max_timestamp`'s anti-join). Validated with a full-history reprocess then an idempotent re-run.
+- **In a dbt post-hook, reference relations as LITERAL strings — never `ref()`/`source()`/`this`.**
+  Post-hooks are stored as templates and re-rendered at RUN; on that re-render `ref()`/`source()` degrade
+  to `this`, which is frozen to the profile DEFAULT schema (`silver`), so `ref('crtv_sync_creative_revxlate')`
+  resolved to `iceberg.silver.crtv_sync_creative` (TABLE_NOT_FOUND). Fix: hard-code
+  `iceberg.bronze.crtv_sync_creative_revxlate` in every hook (gold MERGE, change log, translation hold,
+  watermark). Keep `ref()` only in the model body + a `-- depends_on:` comment to anchor the DAG. (Same
+  family as the Piece-3 silver-default trap.)
+- **Trino MERGE `UPDATE SET` target columns must be UNQUALIFIED** — `SET col = s.col`, not `SET t.col =`.
+  The RHS may reference the target alias (`t.first_seen_occurrence_id`).
+- **`json_object` can't serialize a json-typed value without `FORMAT JSON`.** `json_parse(x)` inside the
+  change-log `json_object(...)` produced json-typed values that Trino tried to cast to varchar (fails on
+  arrays). Since our json columns are already VARCHAR JSON strings, pass them straight through (they embed
+  as escaped strings — fine for the audit log). Timestamps must be `cast(... as varchar)` too — Trino can't
+  cast a timestamp to json.
+- **A jinja comment `{# … #}` cannot live inside a `{{ config(...) }}` argument list** — it parses as a
+  stray `#`. Put rationale in the header docstring.
+- **`on_table_exists='drop'`** on this hook-heavy model — rebuild by drop+create (correctly schema-qualified)
+  rather than the rename/backup swap, which on this Nessie catalog resolved to the wrong (default) schema.
+- **107-col gold MERGE ported faithfully:** exact Databricks UPDATE-SET *subset* so immutable/identity cols
+  (`creative_id`, `provider_code`, `created_timestamp`, `occurrence_description`, `historical_creative_md5`,
+  `keywords`, …) are preserved on match; `updated_timestamp := current_timestamp` (MRVXVC-14938);
+  `first_seen_occurrence_id` keeps the existing value when incoming is null; `mr_secondary_company_ids` = null.
+  Reconcile-before-MERGE surfaced a second missing gold column — `first_seen_provider_campaign_landing_page`
+  on `gold.creative` (added to ddl/06 + ALTER on the VM), the same class of gap as first-seen's.
+- **69 adverts held is expected, not a bug.** Only `classification_type='Advert'` rows whose product didn't
+  reverse-translate are held; ~1,071 creatives have a null vx1 but the non-advert ones flow through. Held
+  rows are parked in `silver.creative_mapping_translation_hold`, kept out of gold this run, and re-read next
+  run via the stage-1 advert-hold pushback.
 
 ## Decisions (resolved 2026-08-09)
 

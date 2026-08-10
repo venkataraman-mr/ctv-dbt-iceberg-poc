@@ -46,7 +46,7 @@ Use a second VS Code window connected via **Remote-SSH** to the VM for *running 
 (docker/dbt/logs) — not for editing the same files, to avoid divergence between the two copies.
 
 ## Status
-**Foundation + Reference sync (hive + UC) + Postgres + CTV ingestion (Piece 1) + Piece 3 (Job A creative push + Job B first-seen/occurrence-summary) VALIDATED & concurrency-safe. Piece 4 clone-seeding prerequisite VALIDATED (Mode 1; Mode 2 pending daily ingestion). Piece 4 sync-back IN PROGRESS: 8-task job planned, proc clones + watermark seeds built, task 2 (first-seen) VALIDATED on the VM; tasks 3/1/5/4/8 + Piece-5-gated pair remaining. Piece 5 remaining.**
+**Foundation + Reference sync (hive + UC) + Postgres + CTV ingestion (Piece 1) + Piece 3 (Job A creative push + Job B first-seen/occurrence-summary) VALIDATED & concurrency-safe. Piece 4 clone-seeding prerequisite VALIDATED (Mode 1; Mode 2 pending daily ingestion). Piece 4 sync-back IN PROGRESS: 8-task job planned, proc clones + watermark seeds built, tasks 1 (creative), 2 (first-seen), 3 (dedup) VALIDATED end-to-end on the VM (task 1 incl. watermark read→advance loop + idempotent re-run); tasks 5/4/8 + Piece-5-gated pair remaining. Piece 5 remaining.**
 
 *Foundation (2026-07-22):* the full stack (nessie · trino · dbt · ingestion) builds and runs on the
 EC2 VM, and the two-engine smoke test passes — Trino and PyIceberg both read/write one Iceberg table
@@ -137,11 +137,15 @@ product-resync) to Trino/dbt-native, reading the seeded `tempwork.*_ctv_poc` clo
 The two Postgres `get_changes` procs are cloned+retargeted (`ddl/postgres/piece4_sync_procs_ctv_poc.sql`);
 10 timestamp watermarks seeded (`ddl/08`); every Databricks Delta `table_changes` read becomes a **column
 (timestamp) watermark** scan (Trino `table_changes` is append-only) with UTC discipline + a 1-min no-miss lag.
-**Task 2 (first-seen) is VALIDATED on the VM** (`crtv_sync_first_seen.sql` → `gold.creative_first_seen`).
-Archive is parked; the two Piece-5-dependent tasks (last-seen, occurrence-id) are built later. Full plan +
-learnings: `docs/ctv_creative_sync_plan.md`.
+**Tasks 2 (first-seen), 3 (dedup), and 1 (creative) are VALIDATED end-to-end on the VM.** Task 1 (the heavy
+one) is staged — `crtv_sync_creative_forsync` (proc CALL) → `_raw` (schema collapse) → `_revxlate` (vx0→vx1/vx2
+reverse translation) → `crtv_sync_creative` (107-col gold MERGE + change log + both hold loops + watermark);
+its watermark read is the stage-1 proc call and the advance is a stage-3 non-held-max hook, confirmed with a
+full-history reprocess and an idempotent incremental re-run (69 adverts held, expected). Archive is parked; the
+two Piece-5-dependent tasks (last-seen, occurrence-id) are built later. Full plan + task-1 learnings (literal
+hook relations, Trino MERGE bare LHS, json_object, on_table_exists): `docs/ctv_creative_sync_plan.md` §9–10.
 
-Next up: finish the Piece 4 sync tasks (3 → 1 → 5 → 4/8), then Piece 5. Some library upgrades are parked as a
+Next up: finish the Piece 4 sync tasks (5 → 4/8), then Piece 5. Some library upgrades are parked as a
 future action item (`docs/runbook.md` §6).
 
 **Resuming in a new window?** Start with `docs/runbook.md`, `docs/ctv_ingestion.md`, and `scripts/vm_setup.md`.
