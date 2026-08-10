@@ -139,7 +139,7 @@ merge into iceberg.gold.creative t
       cast(keywords as varchar) as keywords,
       cast(is_reclassified as boolean) as is_reclassified,
       cast(print_no_cost as boolean) as print_no_cost
-    from {{ ref('crtv_sync_creative_revxlate') }}
+    from iceberg.bronze.crtv_sync_creative_revxlate
     where holding_flag = false
     ) s
     on t.creative_id = s.creative_id and t.creative_url_hash = s.creative_url_hash
@@ -322,12 +322,12 @@ insert into iceberg.silver.gold_creative_change_log
         key 'is_reclassified' value is_reclassified
         absent on null
       ) as json_log
-    from {{ ref('crtv_sync_creative_revxlate') }}
+    from iceberg.bronze.crtv_sync_creative_revxlate
     where holding_flag = false
 {%- endset %}
 {%- set translation_hold_sql %}
 merge into iceberg.silver.creative_mapping_translation_hold t
-    using (select distinct creative_id, holding_flag from {{ ref('crtv_sync_creative_revxlate') }}) s
+    using (select distinct creative_id, holding_flag from iceberg.bronze.crtv_sync_creative_revxlate) s
     on t.creative_id = s.creative_id
     when matched and s.holding_flag = false then delete
     when not matched and s.holding_flag = true then insert (creative_id) values (s.creative_id)
