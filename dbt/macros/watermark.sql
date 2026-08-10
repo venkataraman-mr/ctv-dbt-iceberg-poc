@@ -119,6 +119,34 @@
      " where watermark_name = '" ~ watermark_name ~ "'") }}
 {% endmacro %}
 
+{#- RUN-TIME timestamp-watermark advance that reads max(ts_col) directly from a SOURCE table (not a
+    candidate), filtered by the watermark's OWN stored end_timestamp — so no start literal has to be
+    embedded/escaped in the hook string (avoids the nested-quote mess). Used by gold-internal updates
+    that read two upstream tables under two watermarks (Piece-4 task 5, first-seen-info). Pass `rel` as a
+    LITERAL relation string (ref()/source() degrade to `this`/silver on the run-time hook re-render).
+    Runs in a post_hook AFTER the MERGE: for a source the MERGE does NOT modify (creative_first_seen) it
+    yields the exact changed-set max; for the self-written source (gold.creative) it also sweeps past this
+    run's own writes, which is intended (idempotent `<>` guard; new family members are re-caught via the
+    other watermark). max is null (no changes) -> no-op, watermark unchanged. -#}
+{% macro watermark_ts_advance_from_source(watermark_name, rel, ts_col='updated_timestamp') %}
+  {% if not execute %}{{ return("select 1") }}{% endif %}
+  {% set q %}
+    select cast(max({{ ts_col }}) as varchar) as m
+    from {{ rel }}
+    where {{ ts_col }} > (select end_timestamp from {{ source('control', 'watermark_control') }}
+                          where watermark_name = '{{ watermark_name }}')
+  {% endset %}
+  {% set m = run_query(q).rows[0]['m'] %}
+  {% if m is none %}{{ return("select 1") }}{% endif %}
+  {{ return(
+     "update " ~ source('control', 'watermark_control') ~
+     " set start_timestamp = end_timestamp," ~
+     " end_timestamp = cast(timestamp '" ~ m ~ "' as timestamp(6) with time zone)," ~
+     " transaction_status = 'SUCCEEDED'," ~
+     " updated_timestamp = cast(current_timestamp as timestamp(6) with time zone)" ~
+     " where watermark_name = '" ~ watermark_name ~ "'") }}
+{% endmacro %}
+
 {#- Reusable timestamp -> snapshot resolver for TIMESTAMP-watermarked table_changes reads on an
     Iceberg source. Generic (any process that keeps a timestamp watermark on an append-only Iceberg
     table can use it); pairs with watermark_ts_begin/finish above.
