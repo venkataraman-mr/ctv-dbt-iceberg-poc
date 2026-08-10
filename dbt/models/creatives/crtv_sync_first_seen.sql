@@ -33,18 +33,6 @@
 {%- set start_ts = wm.start_ts -%}
 {%- set start_ts_naive = (start_ts | string)[:19] if start_ts is not none else '1900-01-01 00:00:00' -%}
 
-{#- compile-time high-water: max updated_timestamp in this run's window (naive-UTC predicate) -#}
-{%- set new_end_ts = none -%}
-{%- if execute -%}
-  {%- set maxq -%}
-    select cast(max(updated_timestamp) as varchar) as m
-    from {{ src }}
-    where updated_timestamp > timestamp '{{ start_ts_naive }}' - interval '1' minute
-      and provider_id in ({{ provider_ids }})
-  {%- endset -%}
-  {%- set new_end_ts = run_query(maxq).rows[0]['m'] -%}
-{%- endif -%}
-
 {%- set cols = [
   'creative_id','creative_url_hash','provider_creative_id','country_iso_2_code','media_id','occurrence_id',
   'occurrence_timestamp','occurrence_timestamp_local','provider_id','media_property_id','media_property_name',
@@ -68,17 +56,18 @@ when not matched then insert ({{ cols | join(', ') }})
   values ({% for c in cols %}s.{{ c }}{{ ", " if not loop.last }}{% endfor %})
 {%- endset -%}
 
-{%- set post = [merge_sql] -%}
-{%- if new_end_ts is not none -%}
-  {%- do post.append("{{ watermark_ts_finish('" ~ wm_name ~ "', '" ~ start_ts_naive ~ "', '" ~ new_end_ts ~ "') }}") -%}
-{%- endif -%}
+{#- post-hooks run at RUN time in order: (1) MERGE the candidate batch into gold; (2) advance the
+    watermark to the max updated_timestamp in the candidate. Both are registered at PARSE (config is
+    parse-time). The watermark hook is a run-time TEMPLATE STRING (self_rel embedded as a literal) so
+    the advance is computed at run — never conditionally appended at parse (that was the bug). -#}
+{%- set wm_finish = "{{ watermark_ts_finish_from_relation('" ~ wm_name ~ "', '" ~ self_rel ~ "', 'updated_timestamp') }}" -%}
 
 {{ config(
     materialized='table',
     schema='bronze',
     tags=['creatives', 'p4_sync'],
     views_enabled=false,
-    post_hook=post
+    post_hook=[merge_sql, wm_finish]
 ) }}
 
 select

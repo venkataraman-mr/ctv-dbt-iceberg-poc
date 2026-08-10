@@ -99,6 +99,26 @@
      " where watermark_name = '" ~ watermark_name ~ "'") }}
 {% endmacro %}
 
+{#- RUN-TIME timestamp-watermark finish for the Piece-4 sync pattern. Pass this as a run-time template
+    string in post_hook (config/post_hook is captured at PARSE, so the advance value cannot be baked in
+    at parse — that was the "watermark never advanced" bug). At run it reads max(ts_col) from the
+    already-built candidate relation `rel` and advances the window: start := old end, end := that max.
+    No rows in the candidate -> no-op (watermark unchanged). rel/ts_col are embedded as literals by the
+    caller; the macro re-renders at run (execute=True) and returns the UPDATE. -#}
+{% macro watermark_ts_finish_from_relation(watermark_name, rel, ts_col='updated_timestamp') %}
+  {% if not execute %}{{ return("select 1") }}{% endif %}
+  {% set q %}select cast(max({{ ts_col }}) as varchar) as m from {{ rel }}{% endset %}
+  {% set m = run_query(q).rows[0]['m'] %}
+  {% if m is none %}{{ return("select 1") }}{% endif %}
+  {{ return(
+     "update " ~ source('control', 'watermark_control') ~
+     " set start_timestamp = end_timestamp," ~
+     " end_timestamp = cast(timestamp '" ~ m ~ "' as timestamp(6) with time zone)," ~
+     " transaction_status = 'SUCCEEDED'," ~
+     " updated_timestamp = cast(current_timestamp as timestamp(6) with time zone)" ~
+     " where watermark_name = '" ~ watermark_name ~ "'") }}
+{% endmacro %}
+
 {#- Reusable timestamp -> snapshot resolver for TIMESTAMP-watermarked table_changes reads on an
     Iceberg source. Generic (any process that keeps a timestamp watermark on an append-only Iceberg
     table can use it); pairs with watermark_ts_begin/finish above.

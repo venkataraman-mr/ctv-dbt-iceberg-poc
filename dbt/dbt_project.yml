@@ -15,6 +15,7 @@ clean-targets: ["target", "dbt_packages"]
 on-run-end:
   - "{{ cleanup_tagged_models(results, 'job_a') }}"
   - "{{ cleanup_tagged_models(results, 'job_b') }}"
+  - "{{ cleanup_tagged_models(results, 'p4_sync') }}"    # Piece 4 sync-back candidate scratch (crtv_sync_*)
 
 models:
   ctv_occurrence:
