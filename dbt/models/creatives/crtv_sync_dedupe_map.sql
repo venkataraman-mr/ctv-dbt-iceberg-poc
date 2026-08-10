@@ -6,7 +6,8 @@
   (reference.creative_match_type is in Iceberg via the UC reference sync) and MERGE into
   iceberg.silver.creative_dedupe_map on (child_creative_id, child_creative_url_hash).
 
-  Timestamp watermark, 1-min UTC lag, idempotent MERGE (same discipline as crtv_sync_first_seen).
+  Timestamp watermark (UTC), NO lag/buffer for dedup (prod uses `> start`, no buffer; the watermark
+  advances to the exact max processed, so `> start` is no-miss), idempotent MERGE.
   Types cast to the silver target (ids BIGINT; scores REAL; json_response VARCHAR; naive Postgres
   timestamps -> timestamp(6) with time zone). Delete pass (removed children) is crtv_sync_dedupe_map_delete.
 
@@ -79,4 +80,4 @@ select
     cast(cdm.updated_timestamp        as timestamp(6) with time zone) as updated_timestamp
 from {{ src }} cdm
 left join {{ mt }} cmt on cmt.match_type_id = cdm.match_type_id
-where cdm.updated_timestamp > timestamp '{{ start_ts_naive }}' - interval '1' minute
+where cdm.updated_timestamp > timestamp '{{ start_ts_naive }}'

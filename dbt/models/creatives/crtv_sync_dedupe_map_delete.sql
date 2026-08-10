@@ -5,8 +5,9 @@
   rows from iceberg.silver.creative_dedupe_map by child_creative_id.
 
   Candidate = the removed-child creative_ids (+ updated_timestamp for the watermark). Post-hooks:
-  (1) DELETE from silver by child_creative_id; (2) advance the watermark. Timestamp watermark, 1-min
-  UTC lag. child_creative_id in silver is the reserved clone id, matching creative_ctv_poc.creative_id.
+  (1) DELETE from silver by child_creative_id; (2) advance the watermark. Timestamp watermark (UTC),
+  NO lag/buffer (dedup, `> start`). child_creative_id in silver is the reserved clone id, matching
+  creative_ctv_poc.creative_id.
 
   Prereq (once): seed CTV_SYNC_DEDUP_DELETE (ddl/08).
 #}
@@ -45,5 +46,5 @@ select
     cast(c.updated_timestamp as timestamp(6) with time zone) as updated_timestamp
 from {{ crtv }} c
 left join {{ dm }} d on d.child_creative_id = c.creative_id
-where c.updated_timestamp > timestamp '{{ start_ts_naive }}' - interval '1' minute
+where c.updated_timestamp > timestamp '{{ start_ts_naive }}'
   and d.child_creative_id is null
