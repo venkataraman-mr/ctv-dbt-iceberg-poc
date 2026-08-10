@@ -5,11 +5,13 @@
   creative_url_hash (UPDATE all non-key cols; INSERT new). The clone is already scoped to our CTV
   creatives + imported parents, so the prod provider_id filter is unnecessary.
 
-  Timestamp watermark (MERGE-written target -> no version CDF): read updated_timestamp > (start - 1 min).
+  Timestamp watermark (MERGE-written target -> no version CDF): read updated_timestamp > start (NO lag).
   UTC/no-miss discipline (docs/ctv_creative_sync_plan.md §2):
     * watermark stored UTC; the clone's updated_timestamp is tz-naive UTC (prod writes AT TIME ZONE 'UTC'),
       so the pushed-down predicate uses a NAIVE-UTC literal (no implicit tz shift);
-    * 1-min inclusive-overlap lag so a boundary/skew row is never skipped;
+    * NO safety lag (removed 2026-08-10): the whole clone is (re)seeded at ~one timestamp, so a 1-min lag
+      window recaptured ALL rows every run. Exclusive `> start` + advance to the exact max read gives no-miss
+      without the bulk re-read (same call as dedup, task 3);
     * advance the watermark to the max updated_timestamp actually read (not now());
     * idempotent MERGE on creative_url_hash -> over-read is safe.
   Types are cast to the gold schema (media_id is VARCHAR in gold; ids sized; naive Postgres timestamps
@@ -108,5 +110,5 @@ select
     cast(section_id                  as integer)                      as section_id,
     cast(provider_campaign_landing_page as varchar)                   as provider_campaign_landing_page
 from {{ src }}
-where updated_timestamp > timestamp '{{ start_ts_naive }}' - interval '1' minute
+where updated_timestamp > timestamp '{{ start_ts_naive }}'
   and provider_id in ({{ provider_ids }})
