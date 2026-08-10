@@ -72,7 +72,7 @@ select
     cast(cdm.is_auto_mapped           as boolean)                    as is_auto_mapped,
     cast(cdm.video_score              as real)                       as video_score,
     cast(cdm.audio_score              as real)                       as audio_score,
-    cast(cdm.json_response            as varchar)                    as json_response,
+    json_format(cdm.json_response)                                   as json_response,   -- jsonb -> Trino json -> VARCHAR text
     cast(cdm.created_by_user_id       as integer)                    as created_by_user_id,
     cast(cdm.created_timestamp        as timestamp(6) with time zone) as created_timestamp,
     cast(cdm.updated_by_user_id       as integer)                    as updated_by_user_id,
