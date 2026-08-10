@@ -15,7 +15,9 @@ clean-targets: ["target", "dbt_packages"]
 on-run-end:
   - "{{ cleanup_tagged_models(results, 'job_a') }}"
   - "{{ cleanup_tagged_models(results, 'job_b') }}"
-  - "{{ cleanup_tagged_models(results, 'p4_sync') }}"    # Piece 4 sync-back candidate scratch (crtv_sync_*)
+  # p4_sync scratch cleanup intentionally DISABLED during the Piece-4 sync build so candidates
+  # (crtv_sync_*) persist for inspection. RE-ENABLE once the whole creative flow is built + validated:
+  #   - "{{ cleanup_tagged_models(results, 'p4_sync') }}"
 
 models:
   ctv_occurrence:
