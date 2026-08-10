@@ -119,14 +119,17 @@ fetch_entire_family as (
     from resolved_parent
 ),
 
--- per parent, the family's earliest first-seen row
+-- per parent, the family's earliest first-seen row (QUALIFY not supported on this Trino build -> subquery)
 family_first_seen as (
-    select e.parent_creative_id, s.*
-    from fetch_entire_family e
-    inner join iceberg.gold.creative_first_seen s
-      on e.child_creative_id = s.creative_id
-    qualify row_number() over (partition by e.parent_creative_id
-                               order by s.occurrence_timestamp nulls last) = 1
+    select * from (
+        select e.parent_creative_id, s.*,
+               row_number() over (partition by e.parent_creative_id
+                                  order by s.occurrence_timestamp nulls last) as rn
+        from fetch_entire_family e
+        inner join iceberg.gold.creative_first_seen s
+          on e.child_creative_id = s.creative_id
+    )
+    where rn = 1
 )
 
 select
