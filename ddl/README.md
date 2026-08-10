@@ -16,6 +16,10 @@ once per environment (idempotent: every statement is `IF NOT EXISTS`).
 | 05 | `05_silver_pieces_3_5.sql` | `silver.creative_dedupe_map`, `digital_staging_occurrence`, `component_coding_translation_hold`, `creative_mapping_translation_hold`, `creative_product_translation_resync_log`, `gold_creative_change_log` | Pieces 4–5 dbt models |
 | 06 | `06_gold_creative.sql` | `gold.creative` (106 cols), `creative_first_seen`, `component_coding`, `digital_deployment_chain` (+`_role`, `_mediator`), `digital_spend_availability` | Piece 4 sync-back |
 | 07 | `07_gold_occurrence.sql` | `gold.digital_gold_occurrence` (partitioned by `capture_month`) | Piece 5 occurrence gate |
+| 08 | `08_silver_watermark_control_piece4.sql` | 10 Piece-4 sync-back **timestamp** watermarks in `silver.watermark_control` (idempotent; 1900-01-01 base) | Piece 4 sync-back dbt models |
+
+Note (ddl/06): `gold.creative_first_seen` gained `provider_campaign_landing_page` (the first-seen sync writes it;
+prod has it). Already-created VM tables need `ALTER TABLE iceberg.gold.creative_first_seen ADD COLUMN provider_campaign_landing_page VARCHAR;`
 
 Scripts 04–07 were generated from the Databricks `table_ddl` notebooks (`bronze.py`/`silver.py`/`gold.py`)
 by the Spark→Trino mapping in each file's header (STRING→VARCHAR, TIMESTAMP→`TIMESTAMP(6) WITH TIME ZONE`,
@@ -53,6 +57,13 @@ joined to the run's `_seed_idmap`); descriptor fields come from clone staging/fi
 prod for external parents. Real `creatives.*`/`ml_results.*` are read-only; `creative_archive` and the
 `reference.*`/`config.*`/`productcentral.*` lookups are not cloned. **Mode 1 validated on the clones; Mode 2
 pending the first daily-ingestion run.** See `docs/ctv_creative_seed.md`.
+
+**Postgres side (Piece 4 sync-back):** `ddl/postgres/piece4_sync_procs_ctv_poc.sql` (run once) clones the two
+prod `get_changes` procs — `sp_dbx_creative_get_changes_for_databricks` and
+`sp_dbx_component_get_changes_for_databricks` — retargeted to the `tempwork *_ctv_poc` clones (jobwork scratch
+→ tempwork; reference/config/`template` + read-only `creative_archive` kept as prod reads). They build the
+`*_forsync_tmp_ctv_poc` payloads the dbt sync models read. Archive is inert (the dbt caller passes a future
+`ca_flag`). Scratch index names are `_ctv_poc`-suffixed. See `docs/ctv_creative_sync_plan.md`.
 
 The **14 reference tables** (`km_preparation_db.*`, `km_preparation_gold_db.*`, `productcentral.*`) are
 provisioned by the Option C reference sync (`ingestion/reference_sync.py`) — see `docs/reference_tables.md`.

@@ -116,12 +116,33 @@ the `*_advert_hold_tmp`/`*_hold_creative_tmp` inputs are runtime scratch (create
 
 ## 8. Build order + validation checkpoints
 
-1. **Proc clones** (creative + component) — DDL, parse-check, run once on Postgres.
-2. **Task 3 (dedup)** + **Task 2 (first-seen)** — independent, simplest; validate row counts vs clones.
+1. **Proc clones** (creative + component) — **BUILT** (`ddl/postgres/piece4_sync_procs_ctv_poc.sql`), pglast-parse-clean; run once on Postgres.
+2. **Task 2 (first-seen)** — **VALIDATED on the VM** (`crtv_sync_first_seen.sql`: MERGE into `gold.creative_first_seen`, watermark advanced, scratch dropped). **Task 3 (dedup)** — next.
 3. **Task 1 (creative)** — the heavy one; validate reverse-translation hash + both hold loops + gold MERGE.
 4. **Task 5 (first-seen-info)** — validate parent→family first-seen propagation.
 5. **Task 4 (component)** + **Task 8 (product-resync)** — validate (component ~empty for CTV).
 6. **Task 6 (last-seen)** + **occurrence-id** — build; defer validation to post-Piece-5.
+
+## 9. Model pattern + build learnings (from task 2)
+
+The Piece-4 sync model shape (each task follows it): compute `watermark_ts_begin` → model body reads the
+source with `updated_timestamp > start − 1 min UTC` and casts to the gold schema, materializing a
+**candidate** table (`schema='bronze'`, tag `p4_sync`) → **post-hooks** MERGE the candidate into the gold
+target and advance the watermark → the candidate is dropped by the `on-run-end` `p4_sync` cleanup.
+
+- **`schema='bronze'` is the candidate's location, not the target.** The gold target is written by the
+  post-hook MERGE (target named explicitly); dbt only "materializes" the staging batch.
+- **post_hook is captured at PARSE, so run-time values can't be conditionally appended.** The watermark
+  advance must be an always-registered **run-time template string** (`watermark_ts_finish_from_relation`,
+  which reads `max(updated_timestamp)` off the candidate at run time). An earlier version appended the
+  watermark hook only when `execute` was true → it never registered → the watermark never advanced. Fixed.
+- **UTC predicate:** the watermark (tz-aware) is stringified/truncated to a naive-UTC literal to compare
+  against the tz-naive Postgres `updated_timestamp` — no implicit local-tz shift.
+- **Type casts to the gold schema matter** (e.g. `gold.creative_first_seen.media_id` is VARCHAR; ids sized;
+  naive Postgres timestamps → `timestamp(6) with time zone`). Reconcile each gold target's columns before
+  writing its MERGE — this surfaced the missing `provider_campaign_landing_page` column on
+  `gold.creative_first_seen` (added to ddl/06 + ALTER on the VM).
+- **Provider filter** kept faithful: `provider_id in (2,11,13,16,18)` via var `p4_first_seen_provider_ids`.
 
 Each step: dbt models + any watermark seed rows, run on the VM, verify counts/keys, then commit (commands
 provided for manual push per your workflow).

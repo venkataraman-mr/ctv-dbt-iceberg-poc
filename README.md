@@ -46,7 +46,7 @@ Use a second VS Code window connected via **Remote-SSH** to the VM for *running 
 (docker/dbt/logs) — not for editing the same files, to avoid divergence between the two copies.
 
 ## Status
-**Foundation + Reference sync (hive + UC) + Postgres + CTV ingestion (Piece 1) + Piece 3 (Job A creative push + Job B first-seen/occurrence-summary) VALIDATED & concurrency-safe. Piece 4 clone-seeding prerequisite: Mode 1 (new data) VALIDATED on the clones, Mode 2 (updates) pending the first daily-ingestion run. Piece 4 sync-back + Piece 5 remaining.**
+**Foundation + Reference sync (hive + UC) + Postgres + CTV ingestion (Piece 1) + Piece 3 (Job A creative push + Job B first-seen/occurrence-summary) VALIDATED & concurrency-safe. Piece 4 clone-seeding prerequisite VALIDATED (Mode 1; Mode 2 pending daily ingestion). Piece 4 sync-back IN PROGRESS: 8-task job planned, proc clones + watermark seeds built, task 2 (first-seen) VALIDATED on the VM; tasks 3/1/5/4/8 + Piece-5-gated pair remaining. Piece 5 remaining.**
 
 *Foundation (2026-07-22):* the full stack (nessie · trino · dbt · ingestion) builds and runs on the
 EC2 VM, and the two-engine smoke test passes — Trino and PyIceberg both read/write one Iceberg table
@@ -131,7 +131,17 @@ for our creatives, prod for external parents. Real `creatives.*`/`ml_results.*` 
 `creative_archive` and the `reference.*`/`config.*`/`productcentral.*` lookups are not cloned. **Mode 1 (new
 data) validated on the clones; Mode 2 pending the first daily-ingestion run.** Details in `docs/ctv_creative_seed.md`.
 
-Next up: **Piece 4 (sync-back)** itself, then Piece 5, in order. Some library upgrades are parked as a future
-action item (`docs/runbook.md` §6).
+*Piece 4 — sync-back, in progress (2026-08-10):* porting the Databricks `SYNC_CREATIVES_TO_DATABRICKS`
+job (8 tasks: dedup ∥ first-seen → creative → first-seen-info → occurrence-id → last-seen → component ∥
+product-resync) to Trino/dbt-native, reading the seeded `tempwork.*_ctv_poc` clones → Iceberg `gold.*`/`silver.*`.
+The two Postgres `get_changes` procs are cloned+retargeted (`ddl/postgres/piece4_sync_procs_ctv_poc.sql`);
+10 timestamp watermarks seeded (`ddl/08`); every Databricks Delta `table_changes` read becomes a **column
+(timestamp) watermark** scan (Trino `table_changes` is append-only) with UTC discipline + a 1-min no-miss lag.
+**Task 2 (first-seen) is VALIDATED on the VM** (`crtv_sync_first_seen.sql` → `gold.creative_first_seen`).
+Archive is parked; the two Piece-5-dependent tasks (last-seen, occurrence-id) are built later. Full plan +
+learnings: `docs/ctv_creative_sync_plan.md`.
+
+Next up: finish the Piece 4 sync tasks (3 → 1 → 5 → 4/8), then Piece 5. Some library upgrades are parked as a
+future action item (`docs/runbook.md` §6).
 
 **Resuming in a new window?** Start with `docs/runbook.md`, `docs/ctv_ingestion.md`, and `scripts/vm_setup.md`.

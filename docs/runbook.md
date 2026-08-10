@@ -235,6 +235,34 @@ restricted to our CTV clones + their related parents (dedupe_map joined back to 
 non-CTV child of a CTV parent is never loaded. Descriptor fields (provider/type/media, etc.) are sourced from
 the clone staging/first_seen for our creatives and from prod for external parents.
 
+## 4g. Piece 4 — creative sync-back (Trino/dbt-native) — IN PROGRESS (task 2 VALIDATED 2026-08-10)
+Ports the Databricks `SYNC_CREATIVES_TO_DATABRICKS` job (8 tasks) reading the seeded `tempwork.*_ctv_poc`
+clones → Iceberg `gold.*`/`silver.*`. Every Databricks Delta `table_changes` read becomes a **timestamp
+(column) watermark** scan — Trino `table_changes` is append-only, and these gold tables are MERGE-written.
+UTC + 1-min no-miss lag; idempotent MERGEs. Full plan + per-task map + learnings: **`docs/ctv_creative_sync_plan.md`**.
+
+Setup (once):
+```bash
+# Postgres (SQL client; needs tempwork_admin_role): clone the two get_changes procs (retargeted to tempwork)
+\i ddl/postgres/piece4_sync_procs_ctv_poc.sql
+# Trino: seed the 10 Piece-4 timestamp watermarks + add the first-seen gold column
+docker exec -i trino trino --catalog iceberg -f /dev/stdin < ddl/08_silver_watermark_control_piece4.sql
+docker exec -i trino trino --execute "ALTER TABLE iceberg.gold.creative_first_seen ADD COLUMN provider_campaign_landing_page VARCHAR"
+```
+Run / verify (per task; task 2 shown):
+```bash
+docker compose run --rm dbt dbt run --select crtv_sync_first_seen
+docker exec -i trino trino --execute "SELECT count(*) FROM iceberg.gold.creative_first_seen"
+docker exec -i trino trino --execute "SELECT watermark_name,start_timestamp,end_timestamp,transaction_status FROM iceberg.silver.watermark_control WHERE watermark_name='CTV_SYNC_FIRST_SEEN'"
+```
+**Model pattern (all sync tasks):** `watermark_ts_begin` → candidate table (`schema='bronze'`, tag `p4_sync`,
+read `updated_timestamp > start − 1 min`, casts to the gold schema) → post-hooks MERGE candidate → gold + advance
+the watermark via `watermark_ts_finish_from_relation` (a **run-time template-string** hook — post_hook is
+captured at parse, so run-time values can't be conditionally appended; that was a bug, now fixed) → `on-run-end`
+drops the `p4_sync` scratch. **Status:** procs cloned + watermarks seeded; **task 2 (first-seen) VALIDATED**;
+tasks 3 (dedup) → 1 (creative) → 5 → 4/8 next; the two Piece-5-dependent tasks (last-seen, occurrence-id)
+built later (validate after Piece 5). Archive parked (future `ca_flag`).
+
 ## 5. Prod Postgres — reachability RESOLVED, Trino catalog WIRED (2026-07-26)
 Cross-cloud reachability was BLOCKED; DevOps opened the path (verified: `bash scripts/pg_connectivity_test.sh`
 → DNS ok, TCP OPEN, psql auth OK as `databricks_admin_user` @ `vxcentral`, PostgreSQL 16.4). The Trino
