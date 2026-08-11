@@ -3,9 +3,14 @@
 Goal: connect a VS Code window on the Windows desktop to the EC2 VM so the integrated terminal,
 Docker, and dbt all run **on the VM**, driven from the laptop.
 
-**Connection facts:** host `3.145.213.86` · user `ec2-user` · key
+**Connection facts:** host `18.222.25.33` · user `ec2-user` · key
 `C:\Users\venkata.adapa\Downloads\aws_key.pem` · repo on VM `~/CTV_dbt_iceberg_poc`.
 SSH (port 22) is already open (the `scp` step worked).
+
+> This is the VM's **public IP, which changes whenever the instance is stopped/restarted** (it is not a
+> persistent Elastic IP). Last changed 2026-08-11 after a DevOps memory upgrade + restart
+> (`3.145.213.86` → `18.222.25.33`). If it changes again, update `HostName` in your `~/.ssh/config`
+> (step 3), the `scp` line in `scripts/vm_setup.md`, and the checkpoint's VM/env line.
 
 ## 1. Install the Remote-SSH extension
 VS Code → Extensions (`Ctrl+Shift+X`) → search **"Remote - SSH"** (Microsoft,
@@ -25,7 +30,7 @@ Command Palette (`Ctrl+Shift+P`) → **"Remote-SSH: Open SSH Configuration File"
 `C:\Users\venkata.adapa\.ssh\config` → add:
 ```sshconfig
 Host ctv-vm
-    HostName 3.145.213.86
+    HostName 18.222.25.33
     User ec2-user
     IdentityFile C:\Users\venkata.adapa\Downloads\aws_key.pem
     ServerAliveInterval 60

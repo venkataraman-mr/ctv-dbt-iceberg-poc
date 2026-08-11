@@ -69,7 +69,7 @@ then copy it over.
 
 **From your laptop (PowerShell)** — scp the local file to the VM (same key/host you SSH with):
 ```powershell
-scp -i "C:\Users\venkata.adapa\Downloads\aws_key.pem" "C:\work\CTV_dbt_iceberg_poc\.env" ec2-user@3.145.213.86:/home/ec2-user/CTV_dbt_iceberg_poc/.env
+scp -i "C:\Users\venkata.adapa\Downloads\aws_key.pem" "C:\work\CTV_dbt_iceberg_poc\.env" ec2-user@18.222.25.33:/home/ec2-user/CTV_dbt_iceberg_poc/.env
 ```
 Alternatively, on the VM: `nano .env` and paste the contents.
 
