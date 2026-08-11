@@ -19,6 +19,10 @@ on-run-end:
   # crtv_product_resync_*) at the end of a successful run — the analog of the Databricks jobwork DROP. Only
   # fires if no model with that tag failed this run. Opt out: --vars 'keep_p4_sync_creative_to_iceberg_tables: true'.
   - "{{ cleanup_tagged_models(results, 'p4_sync_creative_to_iceberg') }}"
+  # Piece-5 gold-occurrence scratch cleanup: drop the bronze candidate/stage tables (digital_occ_*) at the end
+  # of a successful run — the Databricks jobwork DROP analog (tmp_raw_occ_for_gold / tmp_occ_dedup_result /
+  # tmp_creative_changes). Opt out: --vars 'keep_p5_digital_raw_to_gold_occ_tables: true'.
+  - "{{ cleanup_tagged_models(results, 'p5_digital_raw_to_gold_occ') }}"
 
 models:
   ctv_occurrence:
