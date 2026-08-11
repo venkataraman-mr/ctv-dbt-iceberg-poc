@@ -22,7 +22,7 @@
 {%- set wm = watermark_version_begin(wm_name, raw_rel) -%}
 {%- set country_code_US = "'US'" -%}
 
-{{ config(materialized='table', schema='bronze', tags=['occurrences', 'p5_digital_raw_to_gold_occ'], views_enabled=false, on_table_exists='drop') }}
+{{ config(materialized='table', schema='bronze', tags=['occurrences', 'DIGITAL_RAW_OCC_TO_GOLD_OCC'], views_enabled=false, on_table_exists='drop') }}
 
 with cdf_source as (
 {%- if wm.start_version is none %}

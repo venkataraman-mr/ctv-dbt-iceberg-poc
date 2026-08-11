@@ -21,7 +21,7 @@
 {%- set sc_ref = source('km_preparation_db', 'source_channel') -%}
 {%- set status_flag_active = "'ACTIVE'" -%}
 
-{{ config(materialized='table', schema='bronze', tags=['creatives','p4_sync_creative_to_iceberg'], views_enabled=false) }}
+{{ config(materialized='table', schema='bronze', tags=['creatives','SYNC_CREATIVES_TO_ICEBERG'], views_enabled=false) }}
 
 select
     c.creative_id,

@@ -81,7 +81,7 @@ then update set
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['occurrences', 'p5_digital_raw_to_gold_occ'],
+    tags=['occurrences', 'DIGITAL_RAW_OCC_TO_GOLD_OCC'],
     views_enabled=false,
     on_table_exists='drop',
     post_hook=[

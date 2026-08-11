@@ -21,7 +21,7 @@
 {%- set pm   = source('productcentral', 'productmap') -%}
 {%- set hold = 'iceberg.silver.creative_mapping_translation_hold' -%}
 
-{{ config(materialized='table', schema='bronze', tags=['creatives', 'p4_sync_creative_to_iceberg'], views_enabled=false, on_table_exists='drop') }}
+{{ config(materialized='table', schema='bronze', tags=['creatives', 'SYNC_CREATIVES_TO_ICEBERG'], views_enabled=false, on_table_exists='drop') }}
 
 with pm_cdf as (
     select distinct primary_product_id, set_id

@@ -70,7 +70,7 @@ values (src.mediator_id, src.mediator_name, cast(current_timestamp as timestamp(
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['occurrences', 'p5_digital_raw_to_gold_occ'],
+    tags=['occurrences', 'DIGITAL_RAW_OCC_TO_GOLD_OCC'],
     views_enabled=false,
     on_table_exists='drop',
     post_hook=[ chain_merge, role_merge, mediator_merge ]

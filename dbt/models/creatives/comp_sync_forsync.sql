@@ -22,7 +22,7 @@
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'p4_sync_creative_to_iceberg'],
+    tags=['creatives', 'SYNC_CREATIVES_TO_ICEBERG'],
     views_enabled=false,
     on_table_exists='drop',
     pre_hook=[

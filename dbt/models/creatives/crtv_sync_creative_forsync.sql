@@ -26,7 +26,7 @@
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'p4_sync_creative_to_iceberg'],
+    tags=['creatives', 'SYNC_CREATIVES_TO_ICEBERG'],
     views_enabled=false,
     pre_hook=[
       'drop table if exists ' ~ advert_hold,

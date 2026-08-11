@@ -26,7 +26,7 @@
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'job_a'],
+    tags=['creatives', 'RAW_OCCS_TO_CREATIVE_STAGING'],
     views_enabled=false
 ) }}
 

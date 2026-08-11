@@ -29,7 +29,7 @@
     materialized='incremental',
     incremental_strategy='append',
     schema='bronze',
-    tags=['bronze'],
+    tags=['bronze', 'BIS_CTV_BZ2FILE_TO_RAW_OCC'],
     views_enabled=false,
     post_hook="{{ watermark_version_finish('" ~ wm_name ~ "') }}",
     properties={

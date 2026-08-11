@@ -82,11 +82,11 @@ retry is acceptable, as in Databricks).
 
 The five dbt models are materialized as **tables** (Nessie has no views), so they're the analog of the
 Databricks `jobwork` temp tables — refreshed every run. They're dropped at the end of a **successful**
-run by an `on-run-end` hook (`dbt_project.yml` → `cleanup_tagged_models(results, 'job_a',
-'crtv_staging_final')`, in `macros/cleanup.sql`): it drops every model tagged `job_a` (all five) but
+run by an `on-run-end` hook (`dbt_project.yml` → `cleanup_tagged_models(results, 'RAW_OCCS_TO_CREATIVE_STAGING',
+'crtv_staging_final')`, in `macros/cleanup.sql`): it drops every model tagged `RAW_OCCS_TO_CREATIVE_STAGING` (all five) but
 only when `crtv_staging_final` succeeded — a **failed** run keeps them for debugging. Opt out with
-`--vars 'keep_job_a_tables: true'` to inspect the combined push record after a good run. The persistent
-tables (`creative_unique_urls`, `creative_autochaff`, `silver.watermark_control`) aren't `job_a` models,
+`--vars 'keep_RAW_OCCS_TO_CREATIVE_STAGING_tables: true'` to inspect the combined push record after a good run. The persistent
+tables (`creative_unique_urls`, `creative_autochaff`, `silver.watermark_control`) aren't `RAW_OCCS_TO_CREATIVE_STAGING` models,
 so they're never touched. (Gotcha found here: a Jinja `{% set %}` inside a `{% for %}` is loop-scoped —
 the gate flag must live on a `namespace()` to escape the loop.)
 
@@ -133,7 +133,8 @@ in `current_commit_version` (`InProgress`); the final model's post-hook promotes
 ```bash
 # once, on Postgres: run ddl/postgres/piece3_tempwork_ctv_poc.sql
 # once, on Trino: seed the Job A watermark row (ddl/03 DIGITAL_RAW_OCC_TO_CRTV_STAGING)
-docker compose run --rm dbt dbt run --select +crtv_staging_final
+docker compose run --rm dbt dbt run --select +crtv_staging_final          # by model
+docker compose run --rm dbt dbt run --select tag:RAW_OCCS_TO_CREATIVE_STAGING          # by job tag (same models, whole job)
 # verify
 docker exec -i trino trino --execute "SELECT count(*) FROM postgres.tempwork.creative_staging_ctv_poc"
 docker exec -i trino trino --execute "SELECT count(*) FROM postgres.tempwork.creative_first_seen_ctv_poc"
@@ -163,8 +164,8 @@ run together as one Job B. All Postgres targets are `tempwork.*_ctv_poc` clones.
 `creative_id`, joins the media/market dims, builds the occurrence-level payload; post-hooks write the PG
 temp table and `pg_call` the cloned update proc, which pulls each `creative_first_seen` row back to its
 EARLIEST occurrence (`UPDATE … WHERE trg.occurrence_timestamp > tmp.occurrence_timestamp`). Job A seeds
-`creative_first_seen`; Job B only updates. `REPLACE(x,' ','')` → `replace(x, chr(0), '')` (Spark
-` ` is the NUL char here, unlike the Postgres proc's literal-` ` strip).
+`creative_first_seen`; Job B only updates. `REPLACE(x,'\0','')` → `replace(x, chr(0), '')` (Spark
+`\0` is the NUL char here, unlike the Postgres proc's literal-`\0` strip).
 
 **Occurrence summary** (`crtv_occ_summary_candidate` → `crtv_occ_summary_final`, watermark
 `DIGITAL_RAW_OCC_SUMMARY_PSQL`) — port of `CrtvOccSummary` (minus `PrintCreativeOccurrenceSummary`).
@@ -180,12 +181,13 @@ Iceberg `MERGE` with `DELETE` (works on Nessie; fall back to `DELETE`+`INSERT` i
 New objects: PG clone `tempwork.creative_occurrence_summary_ctv_poc` + `sp_dbx_digital_upsert_to_crtv_occ_summary_ctv_poc`
 (`ddl/postgres/piece3_tempwork_ctv_poc.sql`); `capture_timestamp` added to `bronze.missing_digital_occurrence_for_summary`
 (ddl/04, Databricks MRVXVC-11059); watermark seeds `DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE` +
-`DIGITAL_RAW_OCC_SUMMARY_PSQL` (ddl/03). Both jobs tagged `job_b`; the generalized `on-run-end` cleanup
-drops the `job_b` scratch after a clean run.
+`DIGITAL_RAW_OCC_SUMMARY_PSQL` (ddl/03). Both jobs tagged `CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY`; the generalized `on-run-end` cleanup
+drops the `CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY` scratch after a clean run.
 
 Run (parallel is safe after the watermark-table partitioning fix below):
 ```bash
-docker compose run --rm dbt dbt run --select crtv_firstseen crtv_occ_summary_candidate crtv_occ_summary_final
+docker compose run --rm dbt dbt run --select crtv_firstseen crtv_occ_summary_candidate crtv_occ_summary_final          # by model
+docker compose run --rm dbt dbt run --select tag:CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY          # by job tag (same models, whole job)
 docker exec -i trino trino --execute "SELECT count(*) FROM postgres.tempwork.creative_occurrence_summary_ctv_poc"
 docker exec -i trino trino --execute "SELECT count(*) FROM iceberg.bronze.missing_digital_occurrence_for_summary"   -- parked-unresolved
 ```

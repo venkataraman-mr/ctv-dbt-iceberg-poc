@@ -147,7 +147,7 @@ where creative_url_hash in (select creative_url_hash from {{ self_rel }})
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'job_a'],
+    tags=['creatives', 'RAW_OCCS_TO_CREATIVE_STAGING'],
     views_enabled=false,
     post_hook=[h_autochaff, h_uu_insert, h_pg_drop, h_pg_ctas, h_call, h_flip,
                "{{ watermark_version_finish('" ~ wm_name ~ "') }}"]

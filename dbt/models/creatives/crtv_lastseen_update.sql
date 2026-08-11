@@ -39,7 +39,7 @@ when matched and m.last_seen_timestamp <> s.capture_timestamp then update set
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'p4_sync_creative_to_iceberg'],
+    tags=['creatives', 'SYNC_CREATIVES_TO_ICEBERG'],
     views_enabled=false,
     on_table_exists='drop',
     post_hook=[

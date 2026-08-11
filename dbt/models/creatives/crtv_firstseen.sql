@@ -12,7 +12,7 @@
 
   Spark->Trino swaps only: table_changes signature (+ version begin/first-run branch), ANTI JOIN n/a,
   INTERVAL 4 HOUR -> interval '4' hour, REPLACE(x, NUL char, '') -> replace(x, chr(0), '') (Spark NUL char
-  is the NUL char), current_timestamp() -> current_timestamp. Scratch model (tagged job_b), dropped at
+  is the NUL char), current_timestamp() -> current_timestamp. Scratch model (tagged CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY), dropped at
   end of a successful run.
 #}
 
@@ -79,7 +79,7 @@ from {{ self_rel }}
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'job_b'],
+    tags=['creatives', 'CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY'],
     views_enabled=false,
     post_hook=[h_pg_drop, h_pg_ctas, h_call,
                "{{ watermark_version_finish('" ~ wm_name ~ "') }}"]

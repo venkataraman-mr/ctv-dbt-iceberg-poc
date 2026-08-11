@@ -4,13 +4,14 @@
   model carrying `tag`, but ONLY if NO model with that tag failed/was skipped this run — so a FAILED run
   leaves all of that tag's scratch in place for debugging (exactly when you want it). Works for a job
   with multiple terminals (e.g. Job B = first-seen + occurrence summary). Opt out per tag with
-  `--vars 'keep_<tag>_tables: true'` (e.g. keep_job_a_tables / keep_job_b_tables).
+  `--vars 'keep_<tag>_tables: true'` (e.g. keep_RAW_OCCS_TO_CREATIVE_STAGING_tables /
+  keep_CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY_tables).
 
   Persistent tables are NOT touched: creative_unique_urls / creative_autochaff /
   missing_digital_occurrence_for_summary (bronze) and silver.watermark_control are pre-DDL'd, not dbt
   models, so they never carry the tag.
 
-  Wire-up (dbt_project.yml on-run-end): "{{ cleanup_tagged_models(results, 'job_a') }}" etc.
+  Wire-up (dbt_project.yml on-run-end): "{{ cleanup_tagged_models(results, 'RAW_OCCS_TO_CREATIVE_STAGING') }}" etc.
 #}
 {% macro cleanup_tagged_models(results, tag) %}
   {% if not execute %}{{ return('') }}{% endif %}

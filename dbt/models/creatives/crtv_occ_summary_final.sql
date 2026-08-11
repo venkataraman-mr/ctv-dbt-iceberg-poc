@@ -15,7 +15,7 @@
     5 watermark_version_finish (run-time string, execute=True)
 
   Iceberg MERGE with DELETE is used for the park/release (unlike Job A). If Nessie's row-level delete
-  misbehaves, decompose into DELETE + INSERT. Scratch model (tagged job_b).
+  misbehaves, decompose into DELETE + INSERT. Scratch model (tagged CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY).
 #}
 
 {%- set wm_name = 'DIGITAL_RAW_OCC_SUMMARY_PSQL' -%}
@@ -59,7 +59,7 @@ when not matched and s.creative_id is null then insert
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'job_b'],
+    tags=['creatives', 'CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY'],
     views_enabled=false,
     post_hook=[h_pg_drop, h_pg_ctas, h_call, h_merge_missing,
                "{{ watermark_version_finish('" ~ wm_name ~ "') }}"]

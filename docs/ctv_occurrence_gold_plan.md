@@ -6,7 +6,7 @@ Trino/dbt/Iceberg stack: read new raw occurrences from `bronze.digital_raw_occur
 Piece-4-populated `gold.creative`, enrich, and MERGE into `gold.digital_gold_occurrence` (or park in a hold
 buffer). This is the LAST piece — with it the **whole PoC (Pieces 1–5) is complete**. It also **lit up
 occurrence-id + last-seen** (the Piece-4 tasks that read `gold.digital_gold_occurrence`; validated after Half A).
-The full job runs as `dbt run --select tag:p5_digital_raw_to_gold_occ`. Companion to the creative sync plan
+The full job runs as `dbt run --select tag:DIGITAL_RAW_OCC_TO_GOLD_OCC`. Companion to the creative sync plan
 (`docs/ctv_creative_sync_plan.md`).
 
 First full run (2026-08-11): 811,764 raw → 746,245 gold occurrences (occurrence_id block [75,000,000,000 …
@@ -56,7 +56,7 @@ Sequencing (per §8.7 + confirmed): **Half A first, then Half B.**
   `coalesce(retransmit,false)=false`, `_change_type='insert'`), deduped to the newest per
   (country, provider_code, provider_occurrence_id).
 
-## 3. Staged dbt model plan — all models tagged `p5_digital_raw_to_gold_occ` (all BUILT + VALIDATED)
+## 3. Staged dbt model plan — all models tagged `DIGITAL_RAW_OCC_TO_GOLD_OCC` (all BUILT + VALIDATED)
 
 | Stage | Model | Port of | Notes / first-run result |
 |---|---|---|---|
@@ -142,9 +142,9 @@ Writes: `gold.digital_gold_occurrence`, `gold.digital_deployment_chain{,_role,_m
 - **CTV nuance validated:** `deployment_chain_id = -1` on the CTV gold rows (the dc join is BIS/BISSocial only);
   prelim_spend/impressions null (CTV media properties aren't in the prelim-spend average tables — the join is
   clean, just no match). Both faithful to prod.
-- **Cleanup + full-job:** all 6 models tagged `p5_digital_raw_to_gold_occ`; `on-run-end` drops the bronze scratch
-  after a clean run (opt out `--vars 'keep_p5_digital_raw_to_gold_occ_tables: true'`). Full job:
-  `dbt run --select tag:p5_digital_raw_to_gold_occ` (DAG order verified: A1 → {A2,A3} → A4 → A5 → B).
+- **Cleanup + full-job:** all 6 models tagged `DIGITAL_RAW_OCC_TO_GOLD_OCC`; `on-run-end` drops the bronze scratch
+  after a clean run (opt out `--vars 'keep_DIGITAL_RAW_OCC_TO_GOLD_OCC_tables: true'`). Full job:
+  `dbt run --select tag:DIGITAL_RAW_OCC_TO_GOLD_OCC` (DAG order verified: A1 → {A2,A3} → A4 → A5 → B).
 - **Lights up Piece 4:** after Half A populated gold occurrences, `crtv_occid_update` resolved 13,333
   `first_seen_occurrence_id`s and `crtv_lastseen_update` refreshed `last_seen_timestamp` for the 21,750
   creatives-with-occurrences (`CTV_LAST_SEEN_DIGITAL` advanced off 1900).
@@ -157,9 +157,9 @@ docker exec -i trino trino --catalog iceberg -f /dev/stdin < ddl/09_silver_water
 #   \i ddl/postgres/piece5_occ_id_seq_ctv_poc.sql   (on Postgres; needs tempwork_admin_role)
 
 # FULL JOB (all 6 in DAG order + scratch cleanup):
-docker compose run --rm dbt dbt run --select tag:p5_digital_raw_to_gold_occ
+docker compose run --rm dbt dbt run --select tag:DIGITAL_RAW_OCC_TO_GOLD_OCC
 
-# single stage (chained -> run the whole tag, or add --vars 'keep_p5_digital_raw_to_gold_occ_tables: true' to keep scratch):
+# single stage (chained -> run the whole tag, or add --vars 'keep_DIGITAL_RAW_OCC_TO_GOLD_OCC_tables: true' to keep scratch):
 docker compose run --rm dbt dbt run --select digital_occ_raw_cdf
 docker compose run --rm dbt dbt run --select digital_occ_raw_cdf
 # full Half A / full job commands: added as stages 2-5 + Half B land.

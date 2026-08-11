@@ -29,7 +29,7 @@
 {%- set classification_type_BadAd  = "'BadAd'" -%}
 {%- set job_log_key = "'" ~ invocation_id ~ "|OCC_FROM_RAW_TO_OCC_GOLD'" -%}
 
-{{ config(materialized='table', schema='bronze', tags=['occurrences', 'p5_digital_raw_to_gold_occ'], views_enabled=false, on_table_exists='drop') }}
+{{ config(materialized='table', schema='bronze', tags=['occurrences', 'DIGITAL_RAW_OCC_TO_GOLD_OCC'], views_enabled=false, on_table_exists='drop') }}
 
 with cte_origin as (
     select origin_channel_id, lower(origin_channel_name) as origin_channel_name

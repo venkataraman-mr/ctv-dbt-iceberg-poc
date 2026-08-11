@@ -11,7 +11,7 @@
 {%- set pm  = source('productcentral', 'productmap') -%}
 {%- set aff = ref('crtv_product_resync_affected') -%}
 
-{{ config(materialized='table', schema='bronze', tags=['creatives', 'p4_sync_creative_to_iceberg'], views_enabled=false, on_table_exists='drop') }}
+{{ config(materialized='table', schema='bronze', tags=['creatives', 'SYNC_CREATIVES_TO_ICEBERG'], views_enabled=false, on_table_exists='drop') }}
 
 with base as (
     select creative_id, primary_product_id, secondary_products from {{ aff }}

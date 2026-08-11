@@ -118,7 +118,8 @@ docker exec -i trino trino --execute "INSERT INTO iceberg.silver.watermark_contr
  VALUES ('BIS_CTV_US_INGESTION_STG_TO_RAW_OCC', NULL, NULL, NULL, NULL, 'SUCCEEDED', current_timestamp, current_timestamp)"
 
 # 5. staging -> raw (appends into the pre-created iceberg.bronze.digital_raw_occurrence)
-docker compose exec dbt dbt run --select digital_raw_occurrence
+docker compose exec dbt dbt run --select digital_raw_occurrence          # by model
+docker compose exec dbt dbt run --select tag:BIS_CTV_BZ2FILE_TO_RAW_OCC          # by job tag (same models, whole job)
 
 # 6. verify
 docker exec -i trino trino --execute "SELECT count(*) FROM iceberg.bronze.digtial_raw_occurrence_ctv_staging"

@@ -11,7 +11,7 @@
     * the park/release MERGE  — DELETE resolved / INSERT unresolved back into the buffer (in _final's hooks)
 
   Spark->Trino: table_changes signature (+ version begin/first-run branch); SELECT * EXCEPT(row_num) ->
-  explicit column list; ANTI JOIN -> LEFT JOIN ... IS NULL. Scratch model (tagged job_b).
+  explicit column list; ANTI JOIN -> LEFT JOIN ... IS NULL. Scratch model (tagged CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY).
 #}
 
 {%- set wm_name = 'DIGITAL_RAW_OCC_SUMMARY_PSQL' -%}
@@ -21,7 +21,7 @@
 {{ config(
     materialized='table',
     schema='bronze',
-    tags=['creatives', 'job_b'],
+    tags=['creatives', 'CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY'],
     views_enabled=false
 ) }}
 

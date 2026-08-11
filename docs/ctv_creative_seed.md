@@ -188,6 +188,14 @@ so `RAISE NOTICE` output in the client log is the quickest read on what a run di
   `celebrity`, `competitor`, `component_coding`, `dedupe_map`, and the external-parent `first_seen` /
   `occ_summary` rows are multi-row → **delete-in-scope + insert**, so prod *removals* (an unmapped product,
   a remapped child) propagate.
+- **`updated_timestamp` is stamped at seed time, not copied from source.** Every seeded table with an
+  `updated_timestamp` (`first_seen`, `dedupe_map`, `staging_vx0`, `creative`, `celebrity`, `competitor`) sets
+  it to `clock_timestamp() AT TIME ZONE 'UTC'` (a fresh per-row UTC wall-clock) instead of the prod/clone
+  value. The Piece-4 sync-back dbt models pull changes off `updated_timestamp` watermarks; carrying the source
+  value forward would make freshly-seeded rows look "old" (or collide at ~one source timestamp) and confuse
+  those pulls, so each seed is a clean "changed now" event. The two upsert tables inherit it on re-seed via
+  `ON CONFLICT ... = EXCLUDED.updated_timestamp`. (This is distinct from the Mode 2 *driver*, which still reads
+  prod `creatives.creative.updated_timestamp` to detect which creatives changed.)
 - Load happens in production insertion order (`first_seen → dedupe_map → occ_summary → staging_vx0 →
   creative → product/celebrity/competitor/component_coding → holding`).
 - Ghost parents (a parent orphaned by a remap, no CTV child left) are **left in place**; we don't garbage-

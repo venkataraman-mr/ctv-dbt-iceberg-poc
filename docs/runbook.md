@@ -1,5 +1,9 @@
 # Runbook — CTV dbt+Iceberg PoC
 
+> This is the **infra / stand-up + per-piece build** runbook (VM setup, foundation, each piece's setup &
+> validation history). For the consolidated **daily end-to-end pipeline run** (reference sync → ingestion →
+> Pieces 1–5, in order, with all run + verify commands), see **`docs/ctv_daily_runbook.md`**.
+
 ## 0. VM prerequisites & setup
 
 Follow **`scripts/vm_setup.md`** — a stage-by-stage guide (get repo → disk check → install
@@ -155,7 +159,8 @@ docker exec -i trino trino --execute "INSERT INTO iceberg.silver.watermark_contr
 ```
 Run / verify:
 ```bash
-docker compose run --rm dbt dbt run --select +crtv_staging_final
+docker compose run --rm dbt dbt run --select +crtv_staging_final          # by model
+docker compose run --rm dbt dbt run --select tag:RAW_OCCS_TO_CREATIVE_STAGING          # by job tag (same models, whole job)
 docker exec -i trino trino --execute "SELECT count(*) FROM postgres.tempwork.creative_staging_ctv_poc"
 docker exec -i trino trino --execute "SELECT count(*) FILTER (WHERE is_staged) FROM iceberg.bronze.creative_unique_urls"
 docker exec -i trino trino --execute "SELECT last_commit_version, transaction_status FROM iceberg.silver.watermark_control WHERE watermark_name='DIGITAL_RAW_OCC_TO_CRTV_STAGING'"
@@ -191,7 +196,8 @@ SQL
 ```
 Run / verify:
 ```bash
-docker compose run --rm dbt dbt run --select crtv_firstseen crtv_occ_summary_candidate crtv_occ_summary_final
+docker compose run --rm dbt dbt run --select crtv_firstseen crtv_occ_summary_candidate crtv_occ_summary_final          # by model
+docker compose run --rm dbt dbt run --select tag:CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY          # by job tag (same models, whole job)
 docker exec -i trino trino --execute "SELECT count(*) FROM postgres.tempwork.creative_occurrence_summary_ctv_poc"
 docker exec -i trino trino --execute "SELECT count(*) FROM iceberg.bronze.missing_digital_occurrence_for_summary"   # parked-unresolved
 ```
@@ -255,8 +261,8 @@ docker exec -i trino trino --execute "UPDATE iceberg.silver.watermark_control SE
 ```
 Run the FULL job (all 8 tasks in the reconciled Databricks DAG order; roots/leaves parallelize with ≥2 threads):
 ```bash
-docker compose run --rm dbt dbt ls  --select tag:p4_sync_creative_to_iceberg --output name   # 18 models
-docker compose run --rm dbt dbt run --select tag:p4_sync_creative_to_iceberg                  # end-to-end
+docker compose run --rm dbt dbt ls  --select tag:SYNC_CREATIVES_TO_ICEBERG --output name   # 18 models
+docker compose run --rm dbt dbt run --select tag:SYNC_CREATIVES_TO_ICEBERG                  # end-to-end
 ```
 Or run a SINGLE task (chained tasks need the whole chain — scratch is dropped each run; single-model tasks read
 already-built gold tables so the final model alone suffices):
@@ -266,9 +272,9 @@ already-built gold tables so the final model alone suffices):
 # fs-info (5):   dbt run --select crtv_fsinfo_update          # occ-id: crtv_occid_update   # last-seen(6): crtv_lastseen_update
 # component (4): dbt run --select comp_sync_forsync comp_sync_explode comp_sync_revxlate comp_sync
 # resync (8):    dbt run --select crtv_product_resync_affected crtv_product_resync_prim crtv_product_resync_sec crtv_product_resync
-# dev inspection of a chained task's intermediates: add --vars 'keep_p4_sync_creative_to_iceberg_tables: true'
+# dev inspection of a chained task's intermediates: add --vars 'keep_SYNC_CREATIVES_TO_ICEBERG_tables: true'
 ```
-**Model pattern (all sync tasks):** a candidate table (`schema='bronze'`, tag `p4_sync_creative_to_iceberg`, casts
+**Model pattern (all sync tasks):** a candidate table (`schema='bronze'`, tag `SYNC_CREATIVES_TO_ICEBERG`, casts
 to the gold schema) → post-hooks MERGE candidate → gold + advance the watermark (`watermark_ts_finish_from_relation`
 or `watermark_ts_advance_from_source`, run-time template-string hooks) → `on-run-end` drops the scratch (re-enabled;
 opt out with the keep-var). The watermark READ is either `watermark_ts_begin` (first-seen/dedup/fs-info/last-seen,
@@ -283,7 +289,7 @@ task 4 (component) near-empty smoke-test; task 8 (product-resync) no-op at `max(
 Databricks job; tag renamed; scratch cleanup re-enabled; first-seen 1-min lag removed. Archive parked (future `ca_flag`).
 
 ## 4h. Piece 5 — gold occurrence flow (Trino/dbt-native) — COMPLETE & VALIDATED (2026-08-11)
-Ports the Databricks `DigitalRawocctoGoldocc` job → **6 staged models** (tag `p5_digital_raw_to_gold_occ`), two halves,
+Ports the Databricks `DigitalRawocctoGoldocc` job → **6 staged models** (tag `DIGITAL_RAW_OCC_TO_GOLD_OCC`), two halves,
 two watermarks. This is the **last piece** — the CTV occurrence flow now runs end-to-end on Trino/dbt/Iceberg. Full plan
 + all learnings + commands: **`docs/ctv_occurrence_gold_plan.md`**.
 
@@ -296,14 +302,14 @@ docker exec -i trino trino --catalog iceberg -f /dev/stdin < ddl/09_silver_water
 ```
 Run the FULL job (Half A then Half B, in DAG order; leaves parallelize with ≥2 threads):
 ```bash
-docker compose run --rm dbt dbt ls  --select tag:p5_digital_raw_to_gold_occ --output name    # 6 models
-docker compose run --rm dbt dbt run --select tag:p5_digital_raw_to_gold_occ                   # end-to-end
+docker compose run --rm dbt dbt ls  --select tag:DIGITAL_RAW_OCC_TO_GOLD_OCC --output name    # 6 models
+docker compose run --rm dbt dbt run --select tag:DIGITAL_RAW_OCC_TO_GOLD_OCC                   # end-to-end
 ```
 Or run a SINGLE stage (Half A is chained — scratch is dropped each run, so run the whole chain; Half B reads built gold):
 ```bash
 # Half A: dbt run --select digital_occ_raw_cdf digital_occ_deploychain digital_occ_combined digital_occ_classified digital_occ_gold
 # Half B: dbt run --select digital_occ_crtv_changes
-# dev inspection of Half A intermediates: add --vars 'keep_p5_digital_raw_to_gold_occ_tables: true'
+# dev inspection of Half A intermediates: add --vars 'keep_DIGITAL_RAW_OCC_TO_GOLD_OCC_tables: true'
 ```
 **Half A** (version watermark on append-only `bronze.digital_raw_occurrence`): `digital_occ_raw_cdf` (version-CDF read,
 US/insert/non-retransmit, dedup) → `digital_occ_deploychain` (distinct daisy chains → **in-place** array transform →
