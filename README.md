@@ -146,7 +146,22 @@ semi-join** (never hashed) to fit Trino's memory + 150-stage limits. The dbt DAG
 Databricks job**; scratch is cleaned up on-run-end. Full plan + all learnings + single-task/full-job commands:
 `docs/ctv_creative_sync_plan.md` §8–12.
 
-Next up: **Piece 5** (gold occurrence flow) — which also lights up occurrence-id + last-seen. Some library
+*Piece 5 — gold occurrence flow, COMPLETE (built) & VALIDATED (2026-08-11):* the Databricks
+`DigitalRawocctoGoldocc` job ported to **6 staged Trino/dbt models** (tag `p5_digital_raw_to_gold_occ`),
+two halves + two watermarks. **Half A** (version watermark on append-only `bronze.digital_raw_occurrence`):
+`digital_occ_raw_cdf` → `digital_occ_deploychain` (daisy chains → `gold.digital_deployment_chain{,_role,_mediator}`)
+→ `digital_occ_combined` (union new raw + the `silver.digital_staging_occurrence` hold buffer + media/market
+enrichment, reusing the validated Piece-3 CTEs) → `digital_occ_classified` (the gate against `gold.creative`) →
+`digital_occ_gold` (writer: prelim spend + **`occurrence_id` from a 75-billion Postgres sequence** → MERGE
+`gold.digital_gold_occurrence`; park/release the buffer; version-watermark finish). **Half B**
+`digital_occ_crtv_changes` (timestamp watermark on `gold.creative.updated_timestamp`): re-parent + delete_flag
+updates to existing gold occurrences. First run: **811,764 raw → 746,245 gold occurrences** (`occurrence_id`
+[75,000,000,000 … 75,000,746,244]) + 65,519 held; deployment chains match prod. Runs as
+`dbt run --select tag:p5_digital_raw_to_gold_occ`. This also **lit up the Piece-4 occurrence-id (13,333
+resolved) + last-seen tasks**. Full plan + learnings: `docs/ctv_occurrence_gold_plan.md`.
+
+**The whole PoC (Pieces 1–5) is now complete** — CTV occurrence flow running end-to-end on Trino/dbt/Iceberg,
+no Databricks/Spark in the pipeline. Some library
 upgrades are parked as a future action item (`docs/runbook.md` §6).
 
 **Resuming in a new window?** Start with `docs/runbook.md`, `docs/ctv_ingestion.md`, and `scripts/vm_setup.md`.

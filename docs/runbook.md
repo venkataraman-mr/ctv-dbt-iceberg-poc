@@ -277,10 +277,47 @@ occurrence-id has NO watermark (null-check + floor). **In every post-hook, refer
 `ref()`/`source()`/`this` re-render at run to the profile default schema (`silver`) and break (the Piece-3 trap).
 Heavy tasks (component, product-resync) are **split into staged models** and `productmap`/`d_product` are **streamed
 via semi-join** (never hashed) to fit Trino's memory + 150-stage limits. `QUALIFY` is unsupported → `row_number()`
-subquery. **Status:** all 8 tasks built; **1/2/3/5 VALIDATED**; occurrence-id + task 6 (last-seen) Piece-5-gated
-(0-row no-ops until Piece 5); task 4 (component) near-empty smoke-test; task 8 (product-resync) no-op at
-`max(change_dt)`. DAG reconciled to the Databricks job; tag renamed; scratch cleanup re-enabled; first-seen 1-min lag
-removed. Archive parked (future `ca_flag`).
+subquery. **Status:** all 8 tasks built; **1/2/3/5 VALIDATED**; occurrence-id (**13,333 resolved**) + task 6 (last-seen,
+**21,750 candidates, watermark advanced**) **VALIDATED 2026-08-11** once Piece 5 populated `gold.digital_gold_occurrence`;
+task 4 (component) near-empty smoke-test; task 8 (product-resync) no-op at `max(change_dt)`. DAG reconciled to the
+Databricks job; tag renamed; scratch cleanup re-enabled; first-seen 1-min lag removed. Archive parked (future `ca_flag`).
+
+## 4h. Piece 5 — gold occurrence flow (Trino/dbt-native) — COMPLETE & VALIDATED (2026-08-11)
+Ports the Databricks `DigitalRawocctoGoldocc` job → **6 staged models** (tag `p5_digital_raw_to_gold_occ`), two halves,
+two watermarks. This is the **last piece** — the CTV occurrence flow now runs end-to-end on Trino/dbt/Iceberg. Full plan
++ all learnings + commands: **`docs/ctv_occurrence_gold_plan.md`**.
+
+Setup (once):
+```bash
+# Postgres (SQL client; needs tempwork_admin_role): the 75-billion occurrence_id sequence + block table + reserve proc
+\i ddl/postgres/piece5_occ_id_seq_ctv_poc.sql
+# Trino: seed the 2 Piece-5 watermarks (DIGITAL_RAW_OCC_TO_GOLD_OCC version + DIGITAL_CRTV_CHANGES_TO_GOLD_OCC timestamp)
+docker exec -i trino trino --catalog iceberg -f /dev/stdin < ddl/09_silver_watermark_control_piece5.sql
+```
+Run the FULL job (Half A then Half B, in DAG order; leaves parallelize with ≥2 threads):
+```bash
+docker compose run --rm dbt dbt ls  --select tag:p5_digital_raw_to_gold_occ --output name    # 6 models
+docker compose run --rm dbt dbt run --select tag:p5_digital_raw_to_gold_occ                   # end-to-end
+```
+Or run a SINGLE stage (Half A is chained — scratch is dropped each run, so run the whole chain; Half B reads built gold):
+```bash
+# Half A: dbt run --select digital_occ_raw_cdf digital_occ_deploychain digital_occ_combined digital_occ_classified digital_occ_gold
+# Half B: dbt run --select digital_occ_crtv_changes
+# dev inspection of Half A intermediates: add --vars 'keep_p5_digital_raw_to_gold_occ_tables: true'
+```
+**Half A** (version watermark on append-only `bronze.digital_raw_occurrence`): `digital_occ_raw_cdf` (version-CDF read,
+US/insert/non-retransmit, dedup) → `digital_occ_deploychain` (distinct daisy chains → **in-place** array transform →
+`gold.digital_deployment_chain{,_role,_mediator}` MERGEs; `deployment_chain_id = from_big_endian_64(xxhash64(md5))`) →
+`digital_occ_combined` (union new raw + the `silver.digital_staging_occurrence` **hold buffer** + media/market/source_channel
+enrichment, reusing the validated Piece-3 CTEs) → `digital_occ_classified` (**the gate** vs `gold.creative`: computes
+`occurrence_hold_flag`, `delete_flag`, `is_house_ad`, `creative_id`, `deployment_chain_id`) → `digital_occ_gold` (writer:
+prelim spend + reserve **`occurrence_id`** from the 75 B Postgres sequence → 38-col MERGE into `gold.digital_gold_occurrence`;
+park Hold / release Not-Hold in the staging buffer; **version-watermark finish**). **Half B** `digital_occ_crtv_changes`
+(timestamp watermark on `gold.creative.updated_timestamp`): re-parent + delete_flag MERGEs on existing gold rows;
+`update_house_ad_flag` **parked** (needs `gold.digital_spend_availability`). First run: **811,764 raw → 746,245 gold
+occurrences** (occurrence_id [75,000,000,000 … 75,000,746,244]) + **65,519 held**; 2 deployment chains match prod; Half B
+33,338 changed / 0 updates on a fresh gold. Same Trino traps as Piece 4 apply (unqualified MERGE SET, literal-string hooks,
+no `QUALIFY`, `on_table_exists='drop'`, stream huge tables). Scratch cleanup on-run-end (opt out with the keep-var).
 
 ## 5. Prod Postgres — reachability RESOLVED, Trino catalog WIRED (2026-07-26)
 Cross-cloud reachability was BLOCKED; DevOps opened the path (verified: `bash scripts/pg_connectivity_test.sh`

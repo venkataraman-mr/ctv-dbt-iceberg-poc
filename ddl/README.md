@@ -17,6 +17,7 @@ once per environment (idempotent: every statement is `IF NOT EXISTS`).
 | 06 | `06_gold_creative.sql` | `gold.creative` (107 cols), `creative_first_seen`, `component_coding`, `digital_deployment_chain` (+`_role`, `_mediator`), `digital_spend_availability` | Piece 4 sync-back |
 | 07 | `07_gold_occurrence.sql` | `gold.digital_gold_occurrence` (partitioned by `capture_month`) | Piece 5 occurrence gate |
 | 08 | `08_silver_watermark_control_piece4.sql` | 10 Piece-4 sync-back **timestamp** watermarks in `silver.watermark_control` (idempotent; 1900-01-01 base) | Piece 4 sync-back dbt models |
+| 09 | `09_silver_watermark_control_piece5.sql` | 2 Piece-5 gold-occurrence watermarks — `DIGITAL_RAW_OCC_TO_GOLD_OCC` (**version**, Half A) + `DIGITAL_CRTV_CHANGES_TO_GOLD_OCC` (**timestamp**, Half B) | Piece 5 gold-occurrence dbt models |
 
 Note (ddl/06): two columns were added to match prod (the sync writes them). `gold.creative_first_seen` gained
 `provider_campaign_landing_page`; `gold.creative` gained `first_seen_provider_campaign_landing_page` (bringing it
@@ -67,6 +68,16 @@ prod `get_changes` procs — `sp_dbx_creative_get_changes_for_databricks` and
 → tempwork; reference/config/`template` + read-only `creative_archive` kept as prod reads). They build the
 `*_forsync_tmp_ctv_poc` payloads the dbt sync models read. Archive is inert (the dbt caller passes a future
 `ca_flag`). Scratch index names are `_ctv_poc`-suffixed. See `docs/ctv_creative_sync_plan.md`.
+
+**Postgres side (Piece 5 occurrence-id sequence):** `ddl/postgres/piece5_occ_id_seq_ctv_poc.sql` (run once)
+creates `tempwork.occurrence_id_seq_ctv_poc` (**START 75,000,000,000** per Venkat — occurrence_id must be a
+real sequence, not a hash), the id-block table `tempwork.occurrence_id_block_ctv_poc`, and the reservation proc
+`tempwork.sp_reserve_occurrence_ids_ctv_poc(p_n)`. The `digital_occ_gold` writer counts the run's Not-Hold rows,
+calls the proc through the `reserve_occurrence_ids(n)` dbt macro (Trino `system.execute` + read the block back via
+`system.query`), and assigns `block_start + row_number()-1` — the same block-reservation pattern as
+`creative_id_seq_ctv_poc`. Requires `tempwork_admin_role`. `deployment_chain_id` (lower stakes, gate only
+joins/existence-checks it) stays a deterministic `from_big_endian_64(xxhash64(md5))` surrogate — no sequence.
+See `docs/ctv_occurrence_gold_plan.md`.
 
 The **14 reference tables** (`km_preparation_db.*`, `km_preparation_gold_db.*`, `productcentral.*`) are
 provisioned by the Option C reference sync (`ingestion/reference_sync.py`) — see `docs/reference_tables.md`.
