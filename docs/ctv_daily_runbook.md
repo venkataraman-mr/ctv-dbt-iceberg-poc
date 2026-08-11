@@ -226,10 +226,6 @@ First validated full run (2026-08-11): 811,764 raw → **746,245 gold occurrence
   (the first run of each is a one-time full load). Ingestion + Half A use **version** watermarks
   (`system.table_changes` on append-only bronze); the Piece-4 sync and Piece-5 Half B use **timestamp**
   watermarks on `updated_timestamp` (their gold sources are MERGE-written, so version-CDF is invalid).
-- **Seed stamps `updated_timestamp` fresh.** `sp_seed_creative_clones_ctv_poc` stamps each seeded row's
-  `updated_timestamp` with `clock_timestamp() AT TIME ZONE 'UTC'` (not the source value), so the Step-4 sync
-  watermarks see each seed as a clean "changed now" event. `ALL` mode still only seeds rows the seed watermark
-  says changed.
 - **Scratch self-cleans.** Each tagged job drops its bronze scratch (`digital_occ_*`, `crtv_sync_*`,
   `crtv_staging_*`, …) on a successful `on-run-end`. A **failed** run keeps that tag's scratch for debugging;
   to inspect a chained job's intermediates on a clean run, add `--vars 'keep_<TAG>_tables: true'`.

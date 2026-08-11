@@ -415,15 +415,6 @@ BEGIN
     --   first_seen -> dedup -> occ_summary -> staging_vx0 -> creative -> product/celebrity/competitor
     --   -> holding.  (creative_staging is NOT seeded: it is the Mode 1 driver / reserved-id authority;
     --   parents reference prod creatives.creative_staging directly.)
-    --
-    -- updated_timestamp policy: every seeded table's updated_timestamp is stamped with
-    --   clock_timestamp() AT TIME ZONE 'UTC' (a fresh seed-time UTC wall-clock), NOT copied from the
-    --   source row. The Piece-4 sync-back dbt models pull changes off updated_timestamp watermarks;
-    --   carrying the prod/clone-staging value forward would make already-seeded rows look "old" (or
-    --   collide at ~one source timestamp) and confuse those pulls. Stamping at load time makes every
-    --   seed a clean, monotonic "changed now" event. clock_timestamp() (not now()/current_timestamp)
-    --   is per-row and advances within the transaction. The two upsert tables (staging_vx0, creative)
-    --   inherit this via ON CONFLICT ... = EXCLUDED.updated_timestamp on re-seed.
     -- ===================================================================================
 
     -- 2.2  first_seen  [EXTERNAL parents only; our creatives' rows are Job-B-owned]  (delete + insert)
@@ -446,7 +437,7 @@ BEGIN
         fs.provider_publisher_id, fs.provider_publisher_domain, fs.provider_campaign_id, fs.provider_campaign_name,
         fs.provider_advertiser_id, fs.provider_advertiser_name, fs.provider_product_id, fs.provider_product_name,
         fs.due_timestamp, fs.market_id, fs.market_name, fs.daypart_id, fs.daypart_name, fs.affiliate_id, fs.affiliate_name,
-        fs.created_timestamp, (clock_timestamp() AT TIME ZONE 'UTC'), fs.edition_id, fs.edition_name, fs.section_id, fs.section_name,
+        fs.created_timestamp, fs.updated_timestamp, fs.edition_id, fs.edition_name, fs.section_id, fs.section_name,
         fs.provider_campaign_landing_page
     FROM creatives.creative_first_seen fs
     JOIN _seed_idmap m ON m.prod_creative_id = fs.creative_id AND m.is_ours = false;
@@ -481,7 +472,7 @@ BEGIN
         COALESCE(css_p.creative_type, pps.creative_type, dm.parent_creative_type),
         COALESCE(med_pc.display_n, med_pp.display_n, dm.parent_creative_subtype),
         dm.match_type_id, dm.revision_type, dm.is_auto_mapped, dm.video_score, dm.audio_score,
-        dm.json_response, dm.created_by_user_id, dm.created_timestamp, dm.updated_by_user_id, (clock_timestamp() AT TIME ZONE 'UTC')
+        dm.json_response, dm.created_by_user_id, dm.created_timestamp, dm.updated_by_user_id, dm.updated_timestamp
     FROM creatives.creative_dedupe_map dm
     JOIN _seed_idmap mc ON mc.prod_creative_id = dm.child_creative_id
     LEFT JOIN _seed_idmap mp ON mp.prod_creative_id = dm.parent_creative_id
@@ -535,7 +526,7 @@ BEGIN
         COALESCE(css.creative_type, v.creative_type),   -- our creatives: from clone staging; external parents: prod vx0
         v.creative_source_type, v.capture_timestamp,    -- creative_source_type: prod vx0 (no clone equivalent)
         v.product_id, v.confidence_score, v.sent_timestamp, v.received_timestamp, v.status_id, v.error_description,
-        (clock_timestamp() AT TIME ZONE 'UTC'), v.ai_brand_name, v.ai_advertiser_name, v.ai_product_name, v.ai_reasoning, v.ai_rule_id,
+        v.updated_timestamp, v.ai_brand_name, v.ai_advertiser_name, v.ai_product_name, v.ai_reasoning, v.ai_rule_id,
         v.ai_rule_justification, v.ai_advertisement_domain, v.ai_product_type, v.ai_parent_n, v.ai_subsidiary_n,
         v.ai_industrygroup_class_n, v.ai_microcategory_class_n, v.ai_microcategory_class_code, v.ai_product_descriptor,
         v.ai_ocr, v.ai_audio_transcript, v.ai_product_brand_display_name, v.ai_product_advertiser_display_name,
@@ -609,7 +600,7 @@ BEGIN
         pc.occurrence_description,                                    -- prod (no clone source; seeded from prod)
         pc.creative_tier_id, pc.primary_language_code, pc.has_additional_multi_product, pc.has_additional_coop_product,
         pc.classification_type_id, pc.classified_by_user_id, pc.classified_timestamp, pc.classification_comments,
-        pc.classification_process_step_id, pc.created_timestamp, (clock_timestamp() AT TIME ZONE 'UTC'), pc.attribution_first_audio,
+        pc.classification_process_step_id, pc.created_timestamp, pc.updated_timestamp, pc.attribution_first_audio,
         pc.attribution_lead_text, pc.attribution_visual, pc.attribution_summary, pc.attribution_other_details,
         pc.attribution_description, pc.attribution_hashtag, pc.attribution_slogan_tagline_id,
         pc.attribution_revision_description, pc.attribution_comments, pc.attribution_creative_tags, pc.custom_attributes,
@@ -691,7 +682,7 @@ BEGIN
         (creative_celebrity_id, creative_id, celebrity_id, created_by_user_id, created_timestamp,
          updated_by_user_id, updated_timestamp)
     SELECT cc.creative_celebrity_id, m.clone_creative_id, cc.celebrity_id, cc.created_by_user_id,
-           cc.created_timestamp, cc.updated_by_user_id, (clock_timestamp() AT TIME ZONE 'UTC')
+           cc.created_timestamp, cc.updated_by_user_id, cc.updated_timestamp
     FROM creatives.creative_celebrity cc
     JOIN _seed_idmap m ON m.prod_creative_id = cc.creative_id
     WHERE m.is_ours
@@ -703,7 +694,7 @@ BEGIN
         (creative_competitor_id, creative_id, competitor_id, created_by_user_id, created_timestamp,
          updated_by_user_id, updated_timestamp)
     SELECT ck.creative_competitor_id, m.clone_creative_id, ck.competitor_id, ck.created_by_user_id,
-           ck.created_timestamp, ck.updated_by_user_id, (clock_timestamp() AT TIME ZONE 'UTC')
+           ck.created_timestamp, ck.updated_by_user_id, ck.updated_timestamp
     FROM creatives.creative_competitor ck
     JOIN _seed_idmap m ON m.prod_creative_id = ck.creative_id
     WHERE m.is_ours
