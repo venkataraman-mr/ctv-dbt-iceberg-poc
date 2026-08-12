@@ -437,7 +437,7 @@ BEGIN
         fs.provider_publisher_id, fs.provider_publisher_domain, fs.provider_campaign_id, fs.provider_campaign_name,
         fs.provider_advertiser_id, fs.provider_advertiser_name, fs.provider_product_id, fs.provider_product_name,
         fs.due_timestamp, fs.market_id, fs.market_name, fs.daypart_id, fs.daypart_name, fs.affiliate_id, fs.affiliate_name,
-        fs.created_timestamp, fs.updated_timestamp, fs.edition_id, fs.edition_name, fs.section_id, fs.section_name,
+        fs.created_timestamp, clock_timestamp() at time zone 'utc' , fs.edition_id, fs.edition_name, fs.section_id, fs.section_name,
         fs.provider_campaign_landing_page
     FROM creatives.creative_first_seen fs
     JOIN _seed_idmap m ON m.prod_creative_id = fs.creative_id AND m.is_ours = false;
@@ -472,7 +472,7 @@ BEGIN
         COALESCE(css_p.creative_type, pps.creative_type, dm.parent_creative_type),
         COALESCE(med_pc.display_n, med_pp.display_n, dm.parent_creative_subtype),
         dm.match_type_id, dm.revision_type, dm.is_auto_mapped, dm.video_score, dm.audio_score,
-        dm.json_response, dm.created_by_user_id, dm.created_timestamp, dm.updated_by_user_id, dm.updated_timestamp
+        dm.json_response, dm.created_by_user_id, dm.created_timestamp, dm.updated_by_user_id, clock_timestamp() at time zone 'utc'
     FROM creatives.creative_dedupe_map dm
     JOIN _seed_idmap mc ON mc.prod_creative_id = dm.child_creative_id
     LEFT JOIN _seed_idmap mp ON mp.prod_creative_id = dm.parent_creative_id
@@ -600,7 +600,7 @@ BEGIN
         pc.occurrence_description,                                    -- prod (no clone source; seeded from prod)
         pc.creative_tier_id, pc.primary_language_code, pc.has_additional_multi_product, pc.has_additional_coop_product,
         pc.classification_type_id, pc.classified_by_user_id, pc.classified_timestamp, pc.classification_comments,
-        pc.classification_process_step_id, pc.created_timestamp, pc.updated_timestamp, pc.attribution_first_audio,
+        pc.classification_process_step_id, pc.created_timestamp, clock_timestamp() at time zone 'utc', pc.attribution_first_audio,
         pc.attribution_lead_text, pc.attribution_visual, pc.attribution_summary, pc.attribution_other_details,
         pc.attribution_description, pc.attribution_hashtag, pc.attribution_slogan_tagline_id,
         pc.attribution_revision_description, pc.attribution_comments, pc.attribution_creative_tags, pc.custom_attributes,
@@ -682,7 +682,7 @@ BEGIN
         (creative_celebrity_id, creative_id, celebrity_id, created_by_user_id, created_timestamp,
          updated_by_user_id, updated_timestamp)
     SELECT cc.creative_celebrity_id, m.clone_creative_id, cc.celebrity_id, cc.created_by_user_id,
-           cc.created_timestamp, cc.updated_by_user_id, cc.updated_timestamp
+           cc.created_timestamp, cc.updated_by_user_id, clock_timestamp() at time zone 'utc'
     FROM creatives.creative_celebrity cc
     JOIN _seed_idmap m ON m.prod_creative_id = cc.creative_id
     WHERE m.is_ours
@@ -694,7 +694,7 @@ BEGIN
         (creative_competitor_id, creative_id, competitor_id, created_by_user_id, created_timestamp,
          updated_by_user_id, updated_timestamp)
     SELECT ck.creative_competitor_id, m.clone_creative_id, ck.competitor_id, ck.created_by_user_id,
-           ck.created_timestamp, ck.updated_by_user_id, ck.updated_timestamp
+           ck.created_timestamp, ck.updated_by_user_id, clock_timestamp() at time zone 'utc'
     FROM creatives.creative_competitor ck
     JOIN _seed_idmap m ON m.prod_creative_id = ck.creative_id
     WHERE m.is_ours
@@ -708,7 +708,7 @@ BEGIN
          attribute_response, is_logically_deleted, created, modified, creative_path,
          page_no, height, width, area, x_offset, y_offset, status, modified_by, order_number)
     SELECT cco.component_coding_id, m.clone_creative_id, cco.component_template_id, cco."sequence", cco."share",
-           cco.attribute_response, cco.is_logically_deleted, cco.created, cco.modified, cco.creative_path,
+           cco.attribute_response, cco.is_logically_deleted, cco.created, clock_timestamp() at time zone 'utc', cco.creative_path,
            cco.page_no, cco.height, cco.width, cco.area, cco.x_offset, cco.y_offset, cco.status, cco.modified_by, cco.order_number
     FROM creatives.component_coding cco
     JOIN _seed_idmap m ON m.prod_creative_id = cco.creative_id
