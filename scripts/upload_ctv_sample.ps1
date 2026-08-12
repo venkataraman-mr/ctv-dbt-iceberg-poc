@@ -7,7 +7,7 @@
 # environment). The Piece-1 landing step then reads from this prefix; processed files move to
 # archive/ in S3.
 #
-# Daily use: drop the day's *.bz2 into the local landing folder, then run this script — it uploads
+# Daily use: drop the day's *.bz2 into the local landing folder, then run this script - it uploads
 # every *.bz2 and deletes each local file after its upload succeeds. Pass -KeepLocal to copy only
 # (no local delete). A single file path also works.
 #
@@ -38,7 +38,7 @@ if ($isFolder) {
   Write-Host "$verb  $Path  ->  $dest    (KeepLocal=$KeepLocal)"
   aws s3 $verb "$Path" "$dest" --region $Region
 }
-if ($LASTEXITCODE -ne 0) { Write-Error "Upload failed (exit $LASTEXITCODE) — local files left in place."; exit $LASTEXITCODE }
+if ($LASTEXITCODE -ne 0) { Write-Error "Upload failed (exit $LASTEXITCODE) - local files left in place."; exit $LASTEXITCODE }
 
 Write-Host "`nUpload complete. Objects now under the ingestion prefix:"
 aws s3 ls "$dest" --region $Region
