@@ -83,9 +83,12 @@ incremental, not full scans. `creative_url_hash` is the exact Spark `xxhash64(se
 at landing (verified vs real PySpark). All timestamps are `timestamp(6) with time zone` (UTC), and
 persistent tables are pre-created by DDL (`ddl/`). Details in `docs/ctv_ingestion.md`.
 
-*Views:* the Nessie catalog does not support Iceberg views or materialized views, so dbt runs with
-`views_enabled: false` (incremental temp relations become tables), and a legacy Databricks view is
-ported as an **ephemeral** dbt model (`media_property_flatten_vx0_vw`).
+*Views:* the **native** Nessie connector (`iceberg.catalog.type=nessie`) doesn't support Iceberg views,
+so dbt runs with `views_enabled: false` (incremental temp relations become tables) and a legacy Databricks
+view is ported as an **ephemeral** dbt model (`media_property_flatten_vx0_vw`). Nessie's **Iceberg REST
+catalog** *does* support views — validated 2026-08-17 on Trino 483 via a scratch `iceberg_rest` catalog
+(`CREATE VIEW` succeeds against the same tables). The pipeline stays on the native catalog by choice; the
+REST path is the productionization route if real views are needed.
 
 *Pieces 3–5 tables provisioned (2026-07-28):* all 20 persistent Iceberg tables are pre-created by DDL
 (`ddl/00`–`07`) — bronze staging/raw/creative, silver watermark + Piece 4/5, gold creative/occurrence/

@@ -28,9 +28,11 @@ on-run-end:
 models:
   ctv_occurrence:
     +materialized: view
-    # The Nessie Iceberg catalog does not support CREATE VIEW. dbt-trino's incremental
-    # materialization stages new rows in a temp relation — force it to a TABLE (not a view) so it
-    # works on Nessie. Applies catalog-wide (every model here runs on the Iceberg/Nessie catalog).
+    # The NATIVE Nessie connector (iceberg.catalog.type=nessie) does not support CREATE VIEW, and
+    # dbt-trino's incremental materialization stages new rows in a temp relation — force it to a TABLE
+    # (not a view) so it works on the native catalog. Applies catalog-wide. (Nessie's Iceberg REST
+    # catalog does support views — validated via iceberg_rest on Trino 483 — but the pipeline runs on
+    # the native catalog, so views stay disabled here.)
     +views_enabled: false
     bronze:
       +tags: ['bronze']          # bronze = sources only (Spark/PyIceberg owns the tables)

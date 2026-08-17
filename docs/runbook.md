@@ -119,11 +119,14 @@ also gets a DDL structure + a dbt source) once identified.
 - **VARIANT -> string** parsing for CTV query patterns — RESOLVED (staging `json_data` is VARCHAR;
   the staging->raw model parses it with `json_parse` / `json_extract_scalar`, and `daisy_chain` /
   `raw_json` are stored as VARCHAR via `json_format`).
-- **Nessie has no view support** — the Nessie catalog implements neither view nor materialized-view
-  management (`createView is not supported for Iceberg Nessie catalogs`). Consequences, both handled:
-  dbt runs with `views_enabled: false` (its incremental temp relations become tables, not views), and
-  a legacy Databricks view is ported as an **ephemeral** dbt model (`media_property_flatten_vx0_vw`).
-  Real views would require a REST-type catalog against Nessie, or a separate view-capable catalog.
+- **Views depend on the connector path** — the **native** Nessie connector (`iceberg.catalog.type=nessie`)
+  implements neither view nor materialized-view management (`createView is not supported for Iceberg Nessie
+  catalogs`). Consequences, both handled: dbt runs with `views_enabled: false` (its incremental temp relations
+  become tables, not views), and a legacy Databricks view is ported as an **ephemeral** dbt model
+  (`media_property_flatten_vx0_vw`). **Nessie's Iceberg REST catalog DOES support views** — validated
+  2026-08-17 on Trino 483 via a scratch `iceberg_rest` catalog (`infra/trino/catalog/iceberg_rest.properties`,
+  `CREATE VIEW` succeeds against the same tables). The pipeline stays on the native catalog by choice; REST is
+  the productionization route for real views.
 
 ## 4b. CTV ingestion (Piece 1) — VALIDATED (2026-07-27)
 End-to-end on the VM: S3 `.bz2`/plain-JSON → bronze staging (PyIceberg landing) → dbt-trino

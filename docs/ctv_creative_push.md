@@ -80,7 +80,7 @@ retry is acceptable, as in Databricks).
 
 ## Scratch cleanup (jobwork analog)
 
-The five dbt models are materialized as **tables** (Nessie has no views), so they're the analog of the
+The five dbt models are materialized as **tables** (the native Nessie connector has no views), so they're the analog of the
 Databricks `jobwork` temp tables — refreshed every run. They're dropped at the end of a **successful**
 run by an `on-run-end` hook (`dbt_project.yml` → `cleanup_tagged_models(results, 'RAW_OCCS_TO_CREATIVE_STAGING',
 'crtv_staging_final')`, in `macros/cleanup.sql`): it drops every model tagged `RAW_OCCS_TO_CREATIVE_STAGING` (all five) but
