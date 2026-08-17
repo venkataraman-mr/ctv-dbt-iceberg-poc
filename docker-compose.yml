@@ -47,6 +47,12 @@ services:
       PG_DB: ${PG_DB}
       PG_USER: ${PG_USER}
       PG_PASSWORD: ${PG_PASSWORD}
+      # Databricks Unity Catalog (Iceberg REST) — scratch unity_catalog.properties reads these via
+      # ${ENV:...}; values come from .env (gitignored), so no secrets in committed files. Optional:
+      # only needed while testing the UC interop catalog.
+      DATABRICKS_HOST: ${DATABRICKS_HOST:-}
+      UC_CATALOG: ${UC_CATALOG:-}
+      DATABRICKS_TOKEN: ${DATABRICKS_TOKEN:-}
     depends_on: [nessie]
     restart: unless-stopped
 
