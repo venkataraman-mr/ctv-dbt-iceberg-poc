@@ -43,6 +43,8 @@ TABLE_MAP = [
     # spend averages — read by Piece 5 (raw->gold occurrence) to assign prelim_spend/impressions
     _t("spend", "digital_dmi_prelim_spend_average_by_media"),
     _t("spend", "digital_dmi_prelim_spend_average_by_property"),
+    _t("tempwork", "unified_ott_ctv_spend_qc_report_w_occ_ids_nk"),
+    _t("tempwork", "ctv_ott_spend_data_from_ops"),
     # NOTE: vx2_taxonomy.d_advertiser / d_product are MANAGED Databricks tables (USING delta, no
     # LOCATION) -> no reachable Delta path on this blob, so they can't be path-synced. They are read
     # directly from Postgres instead (their origin) via the Trino postgres catalog — see

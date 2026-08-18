@@ -72,7 +72,8 @@ def _duckdb_reader(delta_path: str, storage: dict):
     con.execute("INSTALL delta; LOAD delta; INSTALL azure; LOAD azure;")
     # DuckDB's default Azure transport ignores SSL_CERT_FILE/CURL_CA_BUNDLE; use its libcurl transport.
     for stmt in ("SET azure_transport_option_type='curl'",
-                 "SET ca_cert_file='/etc/ssl/certs/ca-certificates.crt'"):
+                 "SET ca_cert_file='/etc/ssl/certs/ca-certificates.crt'",
+                 "SET arrow_large_buffer_size=true"):
         try:
             con.execute(stmt)
         except Exception as e:

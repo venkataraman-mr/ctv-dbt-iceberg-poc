@@ -32,11 +32,18 @@ Iceberg REST Catalog API (`/api/2.1/unity-catalog/iceberg`) with OAuth bearer to
    - `SELECT` on the read/write test table(s)
    - `MODIFY` on the write-test table (and `CREATE TABLE` on the schema if we create it ourselves)
 
-4. **Provide an auth credential** for that identity, delivered via our secure secret channel (**not** in the
-   ticket body):
-   - a **Personal Access Token (PAT)**, **or** (preferred for a service) an **OAuth service principal**
-     (client id + secret) we can exchange for a token.
-   - The token's identity must be the one that has the grants in #3.
+4. **Create a service identity and provide its credential** (via our secure secret channel — **not** in the
+   ticket body). This is a **service principal** — a non-human/automation identity for our Trino engine;
+   **no new Azure account or user mailbox is required**:
+   - A **Databricks-managed service principal** is sufficient (created in the Databricks account/workspace;
+     **no Microsoft Entra ID object needed**). Use an **Entra ID app-registration service principal** instead
+     only if your policy requires all identities to live in Entra.
+   - Grant this service principal the privileges in #3 (it — not a human user — is the identity that needs
+     `EXTERNAL USE SCHEMA` etc.).
+   - Provide either a **PAT generated for the service principal**, or its **OAuth client id + secret**
+     (machine-to-machine) — whichever your policy prefers. (A human user's PAT can work for a quick smoke
+     test, but a dedicated service principal is the right choice for an automated engine and avoids
+     SSO / conditional-access problems.)
 
 5. **Confirm credential vending is available** for the storage backing these tables (Azure ADLS), so the
    external client can obtain **short-lived storage credentials per table**. If a storage credential /
