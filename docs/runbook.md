@@ -76,7 +76,10 @@ Two-reader design (in `ingestion/reference_sync.py`):
   read (a fundamental limit of the PyArrow-dataset path, not a version gap). DuckDB needs the system
   CA bundle (installed in `infra/Dockerfile.ingestion`) **and** `SET azure_transport_option_type='curl'`
   so its libcurl transport can verify TLS to blob storage (its default Azure-SDK transport ignores
-  the CA env vars). Pinned `duckdb==1.5.5`.
+  the CA env vars). It also sets **`SET arrow_large_buffer_size=true`** so a wide string column in a
+  large table (the UC spend QC report) doesn't overflow Arrow's 2 GB regular-string-buffer cap
+  (`OSError: Arrow Appender ... offset ... exceeds this`) — it emits 64-bit `large_string` instead; if
+  that batch gets RAM-heavy, lower `REF_SYNC_BATCH_ROWS`. Pinned `duckdb==1.5.5`.
 
 Per-batch normalization: binary columns → base64 strings (readable, matches how Databricks shows
 binary); timestamps → UTC **with time zone** (Iceberg `timestamptz`), matching Databricks `TIMESTAMP`

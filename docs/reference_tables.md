@@ -54,6 +54,12 @@ Notes for developers:
   vectors / v2Checkpoint** (5 of 14) can't be read by delta-rs's PyArrow-dataset path and fall back to
   **DuckDB** (which applies the deletion vectors). Row counts for DuckDB tables are the DV-applied
   (live) counts.
+- **DuckDB→Arrow 2 GB string-buffer cap (2026-08-17).** A large UC table with a wide string column
+  (the spend QC report `unified_ott_ctv_spend_qc_report_w_occ_ids_nk`, added to the UC entries)
+  overflows Arrow's regular-string-buffer cap (2^31-1 bytes) while streaming; the engine sets
+  `SET arrow_large_buffer_size=true` (64-bit `large_string`) to handle it. It's a per-buffer limit,
+  so lowering `REF_SYNC_BATCH_ROWS` also relieves it. (Confirm whether the pipeline actually consumes
+  that QC report — if not, drop it from `uc_reference_sync.py` rather than mirror a multi-GB table.)
 - **Schema is derived on read**, per run, from the source Delta schema (see `reference_sync.py` and
   `docs/runbook.md` §3). Normalization applied: binary columns → base64 strings; timestamps → UTC
   **with time zone** (Iceberg `timestamptz`), matching Databricks `TIMESTAMP`. Additive source-column
