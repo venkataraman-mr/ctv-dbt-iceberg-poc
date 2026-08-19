@@ -64,6 +64,39 @@ follow inserts but not updates/deletes in CDC.**
 
 ---
 
+## 2b. Table creation & placement — no `LOCATION` for UC Iceberg tables
+
+You **cannot point a UC Iceberg table at a specific storage path.** Databricks does not support the `LOCATION`
+clause for Iceberg tables in Unity Catalog — an Iceberg table must be either a **managed** table (UC picks the
+path) or a **foreign** table read through catalog federation (read-only). `CREATE … USING ICEBERG LOCATION
+'…'` errors ("path-based external Iceberg tables aren't supported in UC").
+
+**Why:** an Iceberg table's current state is a **metadata pointer that changes on every commit**, so a fixed
+storage path can't reliably identify "the table" — unlike Delta, whose `_delta_log` lives at a stable
+location. This is why existing Databricks DDLs that use `LOCATION` are **Delta / external** tables; that
+pattern does **not** port to Iceberg. Migrating those tables to UC-managed Iceberg means dropping `LOCATION`
+and using `CREATE TABLE … USING ICEBERG` (no path).
+
+**Controlling placement (the supported lever):** you can't set a per-table `LOCATION`, but you *can* set a
+**managed storage location at the catalog or schema level**, so every managed table in that catalog/schema is
+written under a storage account/container you designate. UC still appends its own
+`…/schemas/<guid>/tables/<guid>` layout underneath (exactly the `data_location` shape we observed on the test
+table: `…/__unitystorage/schemas/2f063d0f…/tables/…`).
+
+**This constraint actually protects the interop:** managed Iceberg (no `LOCATION`) is the **only** externally
+writable path — it's what gets read/write via the IRC plus credential vending. A path/foreign Iceberg table is
+**read-only** from outside Databricks *and* gets **no credential vending** (the external client must supply its
+own storage creds). So letting UC own the path is what preserves the Trino read + append capability in §2;
+going location-based would forfeit both.
+
+**Migration guidance (per-media cutover):** rewrite `LOCATION`-based Databricks DDLs as managed
+`CREATE TABLE … USING ICEBERG` (no path); use a schema/catalog managed location if you need to steer the
+storage account. If you have existing Iceberg data already sitting at a path that Databricks should see, that's
+foreign-catalog federation (read-only) or a `CTAS` into a managed table when Databricks/external writes are
+needed.
+
+---
+
 ## 3. Why UPDATE / DELETE / MERGE fails (and why v3 doesn't help)
 
 Row-level mutation on an Iceberg table is **merge-on-read**: instead of rewriting whole data files, the engine
@@ -241,6 +274,9 @@ not enable Trino DV-CDC.
 - Trino #23238 — Iceberg REST vended credentials for Azure (open): https://github.com/trinodb/trino/issues/23238
 - Trino #19716 — Hadoop class not found on Iceberg delete files: https://github.com/trinodb/trino/issues/19716
 - Databricks — Access Databricks tables from Apache Iceberg clients (IRC read/write): https://docs.databricks.com/aws/en/external-access/iceberg
+- Databricks — UC managed tables (no LOCATION for Iceberg): https://docs.databricks.com/aws/en/tables/managed
+- Databricks — Specify a managed storage location in Unity Catalog: https://docs.databricks.com/aws/en/connect/unity-catalog/cloud-storage/managed-storage
+- Databricks Community — Create external table using Iceberg not working: https://community.databricks.com/t5/data-engineering/create-external-table-using-iceberg-not-working/td-p/140797
 - Databricks — Use Apache Iceberg v3 features: https://docs.databricks.com/aws/en/iceberg/iceberg-v3
 - Databricks — Row tracking: https://docs.databricks.com/aws/en/tables/features/row-tracking
 - Databricks — Deletion vectors: https://docs.databricks.com/aws/en/tables/features/deletion-vectors

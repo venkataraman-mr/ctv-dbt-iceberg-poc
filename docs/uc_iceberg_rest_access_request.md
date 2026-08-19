@@ -1,82 +1,128 @@
 # Support request — External Iceberg (REST) access to Unity Catalog for a Trino engine
 
-**Summary:** Please enable an **external Apache Iceberg REST Catalog** client (our Trino/dbt engine running
-on an AWS EC2 VM) to **read and write specific UC-managed Iceberg tables** in Unity Catalog, using **Unity
-Catalog credential vending** for the underlying Azure (ADLS) storage. This is a time-boxed PoC to validate
-UC ↔ external-engine interop for the CTV occurrence-flow productionization. Scope is one test schema and a
-single service identity (no per-user access needed).
+**Summary:** Enable an **external Apache Iceberg REST Catalog** client (our Trino/dbt engine on an AWS EC2 VM)
+to **read and write specific UC-managed Iceberg tables** in Unity Catalog. This was a time-boxed PoC to
+validate UC ↔ external-engine interop for the CTV occurrence-flow productionization. Scope: one test schema
+and a single service identity (no per-user access needed).
 
-**Requested by:** <your name> · **Team:** CTV Data Engineering · **Priority:** <e.g. Medium>
 **External engine:** Trino 483 (open-source), Docker on an AWS EC2 VM · **Access protocol:** Unity Catalog
-Iceberg REST Catalog API (`/api/2.1/unity-catalog/iceberg`) with OAuth bearer token + credential vending.
+Iceberg REST Catalog API + OAuth2 (client credentials).
+
+> **Status — GRANTED & TESTED (2026-08-18/19).** Access was provisioned and the interop was validated
+> end-to-end. **Read (`SELECT`) and append (`INSERT`) work** on UC-managed Iceberg (v2 and v3). **Row-level
+> `UPDATE`/`DELETE`/`MERGE` and update/delete CDC do not work from Trino** — an engine-side (Trino 483) limit,
+> not an access problem. Full findings: `docs/uc_managed_iceberg_trino_write_capabilities.md`. This file is now
+> the record of *what was provisioned and how the engine is configured*, kept for reuse on future media-table
+> cutovers.
 
 ---
 
-## What we need you to do
+## Correct REST endpoint (important)
 
-1. **Enable external data access on the Unity Catalog metastore.** It is off by default. A **metastore
-   admin** enables it in the account/metastore settings ("External data access" / "Enable external data
-   access"). Ref: *Enable external data access to Unity Catalog* (Databricks docs).
+The endpoint is **`/api/2.1/unity-catalog/iceberg-rest`** — **not** the older `/api/2.1/unity-catalog/iceberg`,
+which is **deprecated** and returns "Legacy Iceberg endpoints … are deprecated. Please migrate to …
+/iceberg-rest/v1/". The workspace URL **must include the workspace id**, else requests 303-redirect to a login
+page. Also avoid a trailing slash on the host (it produces a `net//api…` double slash in the OAuth
+server-uri fallback).
 
-2. **Choose or create a test schema and at least one UC-managed *Iceberg* table** we can read **and** write.
-   - Writes only work on **UC-managed Iceberg** tables (Delta/UniForm tables are read-only to external
-     engines), so please make the write-test table managed Iceberg.
-   - If it's easier, grant us `CREATE TABLE` on the schema and we'll create the test table ourselves.
-   - *(Low priority, optional)* one Delta/UniForm table too, so we can also confirm a read-only path.
+Confirmed working endpoint for this workspace:
+`https://adb-<workspace-id>.<n>.azuredatabricks.net/api/2.1/unity-catalog/iceberg-rest`.
 
-3. **Grant the service identity** (the principal whose token we'll use — see #4) these privileges on the
-   test catalog/schema/table:
+## What was needed on the Databricks side (reuse for future cutovers)
+
+1. **External data access enabled on the UC metastore** (off by default; metastore admin toggles it).
+2. **A test schema with UC-managed *Iceberg* tables.** Only **UC-managed Iceberg** is externally writable —
+   Delta/UniForm and foreign Iceberg are read-only to external engines, and there is **no `LOCATION` clause**
+   for UC Iceberg tables (managed only; placement is steered by a catalog/schema *managed storage location*,
+   not a per-table path — see the capability doc §2b).
+3. **Grants to the service principal** on the test catalog/schema/table:
    - `USE CATALOG` on the catalog
    - `USE SCHEMA` on the schema
    - **`EXTERNAL USE SCHEMA`** on the schema  ← required for external Iceberg read/write
-   - `SELECT` on the read/write test table(s)
-   - `MODIFY` on the write-test table (and `CREATE TABLE` on the schema if we create it ourselves)
+   - `SELECT` on the read/write test table(s), `MODIFY` on the write-test table, `CREATE TABLE` if the engine
+     creates tables (note: Trino `CREATE TABLE` returned "Failed to create transaction" — tables were created
+     on Databricks; see capability doc).
+4. **A service principal + credential** (via the secure channel, not the ticket). A Databricks-managed service
+   principal is sufficient — **no new Azure/Entra object required**. We authenticated with the **OAuth client
+   id + secret** (machine-to-machine, client-credentials flow); a PAT also works for a smoke test.
 
-4. **Create a service identity and provide its credential** (via our secure secret channel — **not** in the
-   ticket body). This is a **service principal** — a non-human/automation identity for our Trino engine;
-   **no new Azure account or user mailbox is required**:
-   - A **Databricks-managed service principal** is sufficient (created in the Databricks account/workspace;
-     **no Microsoft Entra ID object needed**). Use an **Entra ID app-registration service principal** instead
-     only if your policy requires all identities to live in Entra.
-   - Grant this service principal the privileges in #3 (it — not a human user — is the identity that needs
-     `EXTERNAL USE SCHEMA` etc.).
-   - Provide either a **PAT generated for the service principal**, or its **OAuth client id + secret**
-     (machine-to-machine) — whichever your policy prefers. (A human user's PAT can work for a quick smoke
-     test, but a dedicated service principal is the right choice for an automated engine and avoids
-     SSO / conditional-access problems.)
+## Storage / credential reality (the key finding — read this)
 
-5. **Confirm credential vending is available** for the storage backing these tables (Azure ADLS), so the
-   external client can obtain **short-lived storage credentials per table**. If a storage credential /
-   external location must be associated with the schema for vending to work, please ensure it's configured
-   for the test schema. (This is what lets our AWS-hosted Trino reach the Azure data files.)
+We **cannot** use UC credential vending for storage from Trino today: **Trino 483 implements IRC vended
+credentials for S3 only, not Azure ADLS** (`trinodb/trino` #23238, open). With vending enabled, UC returns a
+per-table ADLS SAS token but Trino ignores it and falls back to `DefaultAzureCredential`, which on our AWS VM
+has no `AZURE_CLIENT_ID` / no Azure IMDS → the read fails ("Error processing metadata for table").
 
-## Values to send back to us
+**Workaround that unblocked read + append:** disable vending and give Trino an **explicit Azure
+storage-account key**. So, in addition to the Databricks grants above, we need from the storage/DBA side:
 
-- **Workspace URL including the workspace id** — e.g. `https://adb-<workspace-id>.<region>.azuredatabricks.net`
-  (the REST endpoint we'll call is `<workspace-url>/api/2.1/unity-catalog/iceberg`; without the workspace id
-  the request 303-redirects to a login page).
-- **UC catalog name** (top-level) to target — used as the REST "warehouse" parameter.
-- **Test schema name** and the **test table name(s)** (managed Iceberg for read+write; optional Delta/UniForm
-  for read-only).
-- **The token / SP secret** via the secure channel (not in the ticket).
+- The **ADLS storage account name + account key** for the account backing the managed tables — here
+  **`vxxdbwcommonpesteu2`** (the same account/key the `uc_reference_sync` already uses, so no new secret was
+  required). Confirmed via `SHOW CREATE TABLE`: the table's `data_location` is
+  `abfss://dbwcontainer@vxxdbwcommonpesteu2.dfs.core.windows.net/deltas/mrdpp/tempwork/__unitystorage/…`.
+- If a future managed table lands in a **different** storage account, we need that account's key **or** an
+  Entra service principal with **`Storage Blob Data Contributor`** on its container.
 
-## Acceptance criteria (what we'll verify from the external engine)
+(When Trino ships Azure vended credentials — #23238 — this account-key requirement goes away and pure vending
+becomes viable.)
 
-1. List the schema and its tables through the REST catalog.
-2. `SELECT` from the managed Iceberg test table (data read via **vended Azure credentials**).
-3. `INSERT` / `CREATE TABLE` into a managed Iceberg test table (external write).
-4. *(Optional)* `SELECT` from a Delta/UniForm table (read-only).
+## Engine-side configuration (for reference / reproducibility)
 
-## Notes / context for you
+**`infra/trino/catalog/unity_catalog.properties`** (scratch catalog `unity_catalog`, env-driven, no secrets in
+the file — all `${ENV:…}` from `.env`):
 
-- We are **not** requesting per-user access or fine-grained row/column policies for this test — a single
-  service identity with the grants above is sufficient.
-- **External write to UC-managed Iceberg is in Public Preview** on Databricks — we're validating it
-  deliberately; a note on the current GA status/timeline would be helpful if you have it.
-- No changes to your production tables are requested — just a dedicated **test schema** + the grants above.
+```properties
+connector.name=iceberg
+iceberg.catalog.type=rest
+iceberg.rest-catalog.uri=${ENV:DATABRICKS_HOST}/api/2.1/unity-catalog/iceberg-rest
+iceberg.rest-catalog.warehouse=${ENV:UC_CATALOG}                 # the UC catalog name (= mrdpp_prod)
+iceberg.rest-catalog.security=OAUTH2
+iceberg.rest-catalog.oauth2.token=${ENV:DATABRICKS_TOKEN}        # (or oauth2.credential=<client-id>:<secret>)
+iceberg.rest-catalog.vended-credentials-enabled=false            # Azure vending unsupported on Trino 483 (#23238)
+fs.azure.enabled=true                                            # renamed from fs.native-azure.enabled in 483
+azure.auth-type=ACCESS_KEY
+azure.access-key=${ENV:UC_AZURE_STORAGE_ACCOUNT_KEY}             # explicit key for the ADLS account above
+```
+
+**`docker-compose.yml`** — the `trino` service passes the UC vars through to the container:
+
+```yaml
+    environment:
+      # … existing AWS/PG vars …
+      DATABRICKS_HOST: ${DATABRICKS_HOST:-}
+      UC_CATALOG: ${UC_CATALOG:-}
+      DATABRICKS_TOKEN: ${DATABRICKS_TOKEN:-}
+      UC_AZURE_STORAGE_ACCOUNT_NAME: ${UC_AZURE_STORAGE_ACCOUNT_NAME:-}
+      UC_AZURE_STORAGE_ACCOUNT_KEY: ${UC_AZURE_STORAGE_ACCOUNT_KEY:-}
+```
+
+**`.env`** (gitignored, on the VM) provides `DATABRICKS_HOST` (no trailing slash, incl. workspace id),
+`UC_CATALOG=mrdpp_prod`, `DATABRICKS_TOKEN` (PAT) or the OAuth client id:secret, and
+`UC_AZURE_STORAGE_ACCOUNT_NAME` / `UC_AZURE_STORAGE_ACCOUNT_KEY`. After changing compose env, recreate the
+container (`docker compose up -d trino`), not just `restart`.
+
+## Values received from the DBA (fill/keep current)
+
+- **Workspace URL (incl. id):** `https://adb-1373526707855139.19.azuredatabricks.net`
+- **UC catalog (REST warehouse):** `mrdpp_prod`
+- **Test schema / tables:** `tempwork` · `trino_interop_test` (v2), `trino_interop_v3` (v3)
+- **Service principal credential:** OAuth client id + secret (via secure channel)
+- **ADLS storage account / key:** `vxxdbwcommonpesteu2` (reference-sync key, secure channel)
+
+## Acceptance results (what we verified from Trino)
+
+1. List schema + tables through the REST catalog — **PASS**.
+2. `SELECT` from a managed Iceberg table (data via the explicit Azure key) — **PASS** (v2 + v3).
+3. `INSERT` / append into a managed Iceberg table (external write) — **PASS** (v2 + v3).
+4. `UPDATE` / `DELETE` / `MERGE` from Trino — **FAIL** (`NoClassDefFoundError: org/apache/hadoop/fs/Path`;
+   Trino-483 delete-writer limit, not access; unchanged on v3).
+5. CDC (`system.table_changes`) — **PARTIAL**: reads append snapshots; refuses delete/overwrite/deletion-vector
+   snapshots. Not an access issue.
 
 ## References (Databricks docs)
 
 - Enable external data access to Unity Catalog: https://learn.microsoft.com/en-us/azure/databricks/external-access/admin
 - Access Databricks tables from Apache Iceberg clients: https://learn.microsoft.com/en-us/azure/databricks/external-access/iceberg
 - Unity Catalog credential vending for external system access: https://docs.databricks.com/aws/en/external-access/credential-vending
+- Trino #23238 — Iceberg REST vended credentials for Azure (open): https://github.com/trinodb/trino/issues/23238
+- Full engine-side findings & options: `docs/uc_managed_iceberg_trino_write_capabilities.md`
