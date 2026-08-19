@@ -53,6 +53,11 @@ services:
       DATABRICKS_HOST: ${DATABRICKS_HOST:-}
       UC_CATALOG: ${UC_CATALOG:-}
       DATABRICKS_TOKEN: ${DATABRICKS_TOKEN:-}
+      # Explicit Azure storage-account key for the UC managed-table files (Trino 483 can't use UC
+      # vended creds for ADLS — trinodb/trino #23238). Same key uc_reference_sync uses. Read by
+      # unity_catalog.properties via ${ENV:UC_AZURE_STORAGE_ACCOUNT_KEY}.
+      UC_AZURE_STORAGE_ACCOUNT_NAME: ${UC_AZURE_STORAGE_ACCOUNT_NAME:-}
+      UC_AZURE_STORAGE_ACCOUNT_KEY: ${UC_AZURE_STORAGE_ACCOUNT_KEY:-}
     depends_on: [nessie]
     restart: unless-stopped
 
