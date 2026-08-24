@@ -11,17 +11,18 @@ Companion findings: `docs/uc_managed_iceberg_trino_write_capabilities.md` (engin
 
 ---
 
-## 1. The two hard requirements
+## 1. Requirements
 
-- **R1 — v3 + VARIANT, served over REST.** The business requires Iceberg **v3** with the **VARIANT** type;
-  JSON/semi-structured columns must stay VARIANT (no VARCHAR/string substitution). The catalog must
-  create/read/write v3+VARIANT over the **Iceberg REST** protocol (so all engines can use it), not just via a
-  single engine's native path.
-- **R2 — Databricks can access the catalog.** The phased plan keeps parts of the flow in **Azure Databricks**,
-  which must read the AWS Iceberg tables. So Databricks needs a **supported** way to reach the catalog.
+**Hard — non-negotiable (business):**
+- **R1 — v3 + VARIANT over REST.** Iceberg **v3** with the **VARIANT** type; JSON/semi-structured columns must
+  stay VARIANT (no VARCHAR/string substitution). Served over the **Iceberg REST** protocol so all engines can use it.
+- **R2 — External-engine read/write.** Trino/Spark and (phased) **Databricks** must read/write the tables over
+  an open protocol.
+- **R3 — Open-source catalog.** The catalog itself must be **open-source** (no managed/paid catalog lock-in).
+  Data is already open Iceberg on S3; the *catalog* must be open too.
 
-Soft criteria (tie-breakers): Iceberg **views**, cross-engine **Trino + Spark + Databricks**, **RBAC**,
-**branch/tag isolation**, **open-source vs managed / lock-in**, operational overhead.
+**Soft — relaxable:** Iceberg **views**, **branch/tag isolation**. (RBAC and operational overhead are
+considerations, not gates.)
 
 ---
 
@@ -61,42 +62,56 @@ Its unique value (branching) doesn't offset a mandatory-requirement miss.
 
 ---
 
-## 4. Analysis against the two hard requirements
+## 4. Analysis against the three hard requirements (R1 v3+VARIANT · R2 external read/write · R3 open-source)
 
-Only options that clear **both** R1 and R2 are viable:
+Adding **R3 (open-source)** eliminates the managed catalogs, which reshapes the answer:
 
-- **Nessie** — fails both. Out (unless v3 is dropped, which the business rejects).
-- **AWS Glue** — Databricks-federatable (R2 ✅) but its REST CreateTable is **v1/v2 only** (R1 ❌). Good reader,
-  not a v3 writer-catalog.
-- **Apache Polaris** — v3-capable and open-source (R1 ✅) but **Databricks can't federate to it** (R2 ❌), so
-  Databricks would be back to the manual attach that can't do VARIANT.
-- **Unity Catalog** — clears both technically, but it's **Azure/Databricks-managed** and external Trino writes
-  to UC-managed Iceberg are **append-only** (no update/delete/MERGE) — the wrong shape for an AWS
-  writer-of-record, and it inverts the cloud topology.
-- **AWS S3 Tables** — **v3 GA (R1 ✅)** and reachable from Databricks via **Glue / SageMaker Lakehouse
-  federation (R2 ✅)**. The one option that meets both, with the data staying as open Iceberg on S3.
+- **AWS S3 Tables** — meets R1 + R2, but it's an **AWS-managed/paid** service → **fails R3**. Out.
+- **Unity Catalog** — meets R1, but managed/paid → **fails R3** (and external Trino write is append-only). Out.
+- **AWS Glue** — managed → **fails R3** (and REST create is v1/v2 → also fails R1). Out.
+- **Nessie** — open-source (R3 ✅) but **fails R1** (REST has no v3) and **fails R2** (native blocks external
+  CRUD; no Databricks federation). Out.
+- **Apache Polaris** — **open-source (Apache TLP → R3 ✅)**, **v3 + VARIANT over REST (R1 ✅)**, and
+  **external Trino/Spark read/write over REST (R2 ✅ for open engines)**. The **only** option that clears all
+  three. Views ✅ (soft bonus); no branching (soft, relaxed).
+
+The one caveat on Polaris is the **Databricks** slice of R2: Databricks can't *UC-federate* to a generic REST
+catalog (Nessie or Polaris). But that's a Databricks-federation limitation, not a Polaris capability gap —
+external Spark reads Polaris v3+VARIANT fine, and Databricks can still read it by other means (see §5).
+Importantly, **our earlier "Databricks can't read v3+VARIANT" tests were run against Nessie, which never served
+v3** — so they don't prove anything about reading a *real* v3 catalog like Polaris. That must be re-tested.
 
 ---
 
 ## 5. Recommendation
 
-**Adopt AWS S3 Tables as the AWS Iceberg catalog for the v3/VARIANT tables** (replacing Nessie for the
-production path). It is the only evaluated catalog that satisfies *both* mandatory requirements: it serves
-Iceberg **v3 + VARIANT** over REST, and Databricks can read it through the supported **Glue/SageMaker Lakehouse
-federation** path. Data remains open Apache Iceberg in your S3 bucket.
+**Adopt Apache Polaris as the AWS Iceberg catalog** (replacing Nessie for the production path). It is the
+**only** evaluated catalog that satisfies all three hard requirements: **open-source** (Apache top-level
+project), **v3 + VARIANT over REST**, and **external Trino/Spark read/write**. It also keeps Iceberg **views**
+(soft bonus); the only thing given up vs Nessie is **git-like branching**, a relaxed soft requirement (the
+pipeline uses a single `main` branch today).
 
-**Writer engine:** keep Trino/dbt for SQL transforms, but validate the v3 write path — **Trino's v3 support is
-experimental**, so for v3/VARIANT writes prefer **Spark (AWS EMR/K8s)** as the writer, or confirm Trino's v3
-write against S3 Tables is reliable before committing. (Reads from Trino/dbt are fine.)
+**Writer engine.** Keep Trino/dbt for SQL transforms, but for the **v3/VARIANT writes** prefer **Spark
+(AWS EMR/K8s)** — Trino's v3 support is experimental. Validate whether Trino-on-Polaris v3 write is reliable
+before relying on it; reads from Trino/dbt are fine.
 
-**Trade-offs to accept:** S3 Tables is an **AWS-managed** catalog service (a lock-in shift from self-hosted
-Nessie, though the table format stays open) and you **lose Nessie's git-like branching** — so first confirm
-whether the pipeline actually depends on branch isolation (today it uses a single `main` branch, so likely
-low impact).
+**Databricks read — the one open item, and how to solve it (all open-source-compatible):**
+Databricks can't *UC-federate* to Polaris (generic REST catalog), so use one of:
+1. **Re-test the manual Spark attach on DBR 18 against Polaris.** Our previous Databricks v3+VARIANT failures
+   were against **Nessie, which never served v3** — invalid for this question. DBR 18's bundled Iceberg is
+   v3/VARIANT-aware, so a manual `SparkCatalog` REST attach to *Polaris* may read v3+VARIANT. Test before
+   assuming it can't.
+2. **External Spark (EMR/K8s, OSS Iceberg 1.11).** A non-Databricks Spark reads Polaris v3+VARIANT cleanly
+   (reference implementation, no DBR classpath shadowing). Run the read-side workload there.
+3. **VARIANT-free projection / handoff.** The AWS stack emits a Databricks-consumable copy of only the columns
+   Databricks needs (e.g. last-seen: ids/timestamps — no VARIANT). Databricks never touches v3+VARIANT; the
+   variant data stays AWS-internal. Sidesteps the issue entirely.
 
-**If a requirement could flex** (it can't today, per the business): drop v3 → Nessie stays with
-VARIANT→VARCHAR; drop Databricks-access → Polaris (open-source v3) becomes ideal. Naming these makes the
-trade space explicit for the leads.
+**The one real trade to flag to leads:** *no* open-source catalog is natively UC-federatable — Databricks
+federation only supports **managed** catalogs (Glue / Snowflake Horizon / UC). So "open-source catalog" and
+"native Databricks UC federation" are mutually exclusive today. Since **open-source is the hard requirement**,
+Databricks reads via one of the three approaches above rather than UC federation. (Only if native UC federation
+were later deemed more important than open-source would the fallback be a managed catalog — S3 Tables.)
 
 ---
 
@@ -114,14 +129,15 @@ catalog decision gates the dbt change).
 
 ## 7. Open items / next steps (short validation PoC)
 
-1. **S3 Tables PoC:** create a v3+VARIANT table in S3 Tables; write from **Trino** and from **Spark**; confirm
-   which writer is reliable for v3.
-2. **Databricks read PoC:** register the S3 Tables / Glue Iceberg REST catalog in UC (Lakehouse Federation) and
-   read a v3+VARIANT table from DBR 18 — confirm VARIANT columns come through.
-3. **Migration assessment:** Nessie → S3 Tables catalog swap (dbt profile/catalog config, table re-registration
-   or re-create), and confirm no dependence on Nessie branching.
-4. **RBAC/governance:** confirm S3 Tables + Lake Formation/SageMaker meets the governance bar (Nessie had none).
-5. **Views:** verify Iceberg view support on S3 Tables if the pipeline needs views in production.
+1. **Stand up Apache Polaris** (self-hosted on AWS); point Trino + Spark at it via the Iceberg REST catalog.
+2. **v3+VARIANT write PoC:** create a v3+VARIANT table in Polaris; write from **Spark** and from **Trino**;
+   confirm which writer is reliable for v3.
+3. **Databricks read PoC (the decisive one):** manual Spark attach on **DBR 18** to Polaris → read a v3+VARIANT
+   table (the test we could never validly run against Nessie). If it works, Databricks-direct is solved; if
+   not, fall back to external Spark or the VARIANT-free projection.
+4. **Migration assessment:** Nessie → Polaris (dbt profile/catalog config, table re-register/recreate); confirm
+   no dependence on Nessie branching.
+5. **RBAC / governance / views:** confirm Polaris RBAC + Iceberg view support meet the production bar.
 
 ---
 
