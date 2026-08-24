@@ -27,15 +27,19 @@ Soft criteria (tie-breakers): Iceberg **views**, cross-engine **Trino + Spark + 
 
 ## 2. What we validated about Nessie (our current catalog)
 
-| Capability | Result |
-| :-- | :-- |
-| v3 + VARIANT over **REST** | ❌ Not supported. `CREATE … format-version=3` silently makes **v2**; `ALTER … format-version=3` → **500 "Implement format version update"**. v3 is "still under active development" in Nessie; latest release doesn't add it. |
-| v3 + VARIANT via **native** connector | ⚠️ Trino *can* create/write/read/mutate v3+VARIANT via the native Nessie API (`/api/v2`) — validated — but those tables are **not readable over REST**, so not cross-engine. |
-| **Views** | Native Nessie connector: ❌ none (pipeline runs `views_enabled=false`). Nessie **REST** catalog: ✅ views work (validated 2026-08-17). |
-| **Snapshots / time-travel / CDC** | Nessie exposes a **single Iceberg snapshot** by design (history lives in Nessie's git commit log). → no snapshot-based time-travel or `table_changes` CDC; must use **timestamp watermarks**. |
-| **RBAC** | ❌ No table/schema-level grants like UC. Relies on Trino-level RBAC (Ranger/OPA) + Nessie OAuth2. |
-| **Databricks access** | ❌ Databricks **cannot federate to Nessie** (generic Iceberg REST catalogs like Nessie/Polaris are not supported UC foreign-catalog sources). Only the fragile manual OSS `SparkCatalog` attach, which can't parse VARIANT. |
-| **Branch / tag isolation** | ✅✅ Git-like branching, tags, atomic multi-table commits — Nessie's signature strength, which the alternatives don't offer. |
+| Capability | Nessie catalog type | Result / additional details |
+| :-- | :-- | :-- |
+| v3 + VARIANT | **REST** | ❌ **v2 works; v3 NOT supported yet.** `CREATE … format-version=3` silently makes **v2**; `ALTER … =3` → **500 "Implement format version update"**. VARIANT requires v3 → unavailable over REST. v3 is "still under active development" in Nessie; latest release doesn't add it. |
+| v3 + VARIANT | **Native** | ⚠️ Trino can create/write/read/mutate v3+VARIANT via `/api/v2` (validated) — but **Trino-only, not cross-engine** (these tables aren't readable over REST). |
+| External CRUD by other engines (e.g. Databricks) | **Native** | ❌ **Hard block.** The native Nessie API isn't consumable by external engines — Databricks can't read/write it (no federation); only our own Trino/PyIceberg use it. |
+| External read/write by Iceberg REST clients | **REST** | ✅ v2 read/write works for REST clients. ❌ But **Databricks still can't federate to Nessie REST** (generic Iceberg REST catalogs aren't a supported UC foreign-catalog source; the fragile manual OSS attach can't parse VARIANT). |
+| Views | **Native** | ❌ Not supported → pipeline runs `views_enabled=false`. |
+| Views | **REST** | ✅ Supported (validated 2026-08-17). |
+| Snapshots / time-travel / CDC | Both | ⚠️ Nessie exposes a **single Iceberg snapshot** by design (history lives in its git commit log) → no snapshot-based time-travel or `table_changes`; must use **timestamp watermarks**. |
+| RBAC | Both | ❌ No table/schema-level grants like UC; rely on Trino-level RBAC (Ranger/OPA) + Nessie OAuth2. |
+| Branch / tag isolation | Both | ✅✅ Git-like branching, tags, atomic multi-table commits — Nessie's signature strength, which the alternatives lack. |
+
+**Two headline Nessie limitations:** (1) **Native** — external Databricks CRUD is a **hard block** (not reachable/operable by Databricks); (2) **REST** — **v2 works but v3 is not supported yet** (so no VARIANT).
 
 **Net:** Nessie fails **both** hard requirements — no v3/VARIANT over REST (R1) and no Databricks access (R2).
 Its unique value (branching) doesn't offset a mandatory-requirement miss.
@@ -44,13 +48,14 @@ Its unique value (branching) doesn't offset a mandatory-requirement miss.
 
 ## 3. Catalog comparison
 
-| Catalog | R1: v3+VARIANT over REST | R2: Databricks access | Views | Trino | Spark | RBAC | Branching | Open-source / managed |
+| Catalog | R1: v3+VARIANT over REST | R2: Databricks access | Views | Trino | Spark | RBAC | Branching | Model (open-source / managed / paid) |
 | :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
-| **Nessie** (current) | ❌ (REST no v3) | ❌ (no federation) | ✅ REST / ❌ native | ✅ | ✅ | ❌ | ✅✅ | OSS, self-host |
-| **AWS Glue** (Iceberg REST) | ❌ create is v1/v2 only (can *read* v3 made elsewhere) | ✅ UC federates to Glue | ⚠️ limited | ✅ | ✅ | ✅ (Lake Formation) | ❌ | AWS-managed |
-| **AWS S3 Tables** | ✅ **v3 GA** | ✅ via Glue / SageMaker Lakehouse federation | ⚠️ verify | ✅ (REST) | ✅ | ✅ (Lake Formation / SageMaker) | ❌ | AWS-managed (data stays open Iceberg on S3) |
-| **Apache Polaris** | ✅ v3 (1.4, 2026) + view federation + cred vending | ❌ (no UC federation to Polaris) | ✅ | ✅ | ✅ | ✅ | ❌ | OSS (Apache TLP) |
-| **Unity Catalog** | ✅ v3 GA | ✅ native (it *is* UC) | ✅ | ⚠️ read+append only (no update/delete) | ✅ | ✅✅ | ❌ | Databricks/Azure-managed |
+| **Nessie — Native** (our PoC) | n/a (not REST); v3 is **Trino-only** | ❌ external CRUD **blocked** (no federation) | ❌ | ✅ | ✅ | ❌ | ✅✅ | **Fully open-source** (self-hosted) |
+| **Nessie — REST** | ❌ **v2 only; v3 not supported yet** | ❌ (no federation) | ✅ | ✅ | ✅ | ❌ | ✅✅ | **Fully open-source** (self-hosted) |
+| **AWS Glue** (Iceberg REST) | ❌ create v1/v2 only (can *read* v3 made elsewhere) | ✅ UC federates to Glue | ⚠️ limited | ✅ | ✅ | ✅ (Lake Formation) | ❌ | **Managed** (AWS; pay per request + storage) |
+| **AWS S3 Tables** | ✅ **v3 GA** | ✅ via Glue / SageMaker Lakehouse federation | ⚠️ verify | ✅ (REST) | ✅ | ✅ (LF / SageMaker) | ❌ | **Managed / paid** (AWS service; data stays open Iceberg on S3) |
+| **Apache Polaris** | ✅ v3 (1.4, 2026) + view federation + cred vending | ❌ (no UC federation to Polaris) | ✅ | ✅ | ✅ | ✅ | ❌ | **Open-source** (Apache TLP); managed options exist (e.g. Snowflake Open Catalog, paid) |
+| **Unity Catalog** | ✅ v3 GA | ✅ native (it *is* UC) | ✅ | ⚠️ read+append only (no update/delete) | ✅ | ✅✅ | ❌ | **Managed / paid** (Databricks); OSS core (open-source Unity Catalog) with fewer features |
 
 *(⚠️ = supported-but-verify or partial.)*
 
