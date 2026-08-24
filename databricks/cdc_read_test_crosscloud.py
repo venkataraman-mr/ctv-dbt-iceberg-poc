@@ -7,6 +7,12 @@
 # MAGIC 2. **Iceberg incremental / changelog** — Spark's native CDC (`start/end-snapshot-id`, `create_changelog_view`).
 # MAGIC
 # MAGIC Nothing is written. A read-only S3 key is fine.
+# MAGIC
+# MAGIC **IMPORTANT — Nessie exposes only ONE Iceberg snapshot per table** (by design, to keep git-like
+# MAGIC branch/tag isolation; history lives in Nessie's commit log, not the Iceberg snapshot log). So the
+# MAGIC snapshot-range mechanisms below (2a / 2b) have no range to diff and will error / return nothing over a
+# MAGIC Nessie catalog. **Step 1 (timestamp watermark) is the CDC-read mechanism here.** For true commit-level
+# MAGIC CDC you'd diff two Nessie refs/commits (a Nessie feature), not the Iceberg snapshot APIs.
 
 # COMMAND ----------
 dbutils.widgets.text("nessie_uri",   "http://18.222.25.33:19120/iceberg/main/", "Nessie IRC uri")

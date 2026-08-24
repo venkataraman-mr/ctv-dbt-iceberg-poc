@@ -98,6 +98,18 @@ so Iceberg incremental-append reads / `table_changes` choke on its snapshots. A 
 soft-delete + always-bumped `updated_timestamp` means the scan captures inserts, updates and deletes. This is
 the same pattern the pipeline already uses for MERGE-written tables.
 
+**Confirmed on Databricks (2026-08-24): Nessie exposes only a single Iceberg snapshot per table** — by design,
+to preserve its git-like branch/tag isolation (history lives in Nessie's commit log, not the Iceberg snapshot
+log). Verified from Databricks: `.history` / `.snapshots` show one row for every table regardless of how many
+commits were made. Consequences for cross-cloud reads: (1) Iceberg **snapshot-based** reads are unavailable —
+no `VERSION AS OF <snapshot_id>`, no `start/end-snapshot-id` incremental read, no `create_changelog_view`;
+(2) therefore the **timestamp-watermark filtered scan is the CDC-read mechanism** over a Nessie catalog (this
+finding reinforces the design); (3) point-in-time / version reads are still possible, but via **Nessie refs**
+(branch / tag / commit hash / timestamp), not Iceberg snapshot ids; (4) true commit-level CDC (before/after
+images) would use a **Nessie commit-log diff** between two refs, not the Iceberg snapshot APIs. Write DML
+(INSERT/UPDATE/DELETE/MERGE) from Databricks Spark to a Nessie Iceberg table was also confirmed working (on a
+scratch table) — full DML, unlike Trino → UC-managed.
+
 ---
 
 ## 4. Networking & security prerequisites
