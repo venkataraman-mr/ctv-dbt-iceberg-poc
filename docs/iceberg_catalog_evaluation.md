@@ -47,49 +47,81 @@ Its unique value (branching) doesn't offset a mandatory-requirement miss.
 
 ---
 
-## 3. Catalog comparison
+## 3. Catalog landscape & comparison
 
-| Catalog | R1: v3+VARIANT over REST | R2: Databricks access | Views | Trino | Spark | RBAC | Branching | Model (open-source / managed / paid) |
-| :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
-| **Nessie — Native** (our PoC) | n/a (not REST); v3 is **Trino-only** | ❌ external CRUD **blocked** (no federation) | ❌ | ✅ | ✅ | ❌ | ✅✅ | **Fully open-source** (self-hosted) |
-| **Nessie — REST** | ❌ **v2 only; v3 not supported yet** | ❌ (no federation) | ✅ | ✅ | ✅ | ❌ | ✅✅ | **Fully open-source** (self-hosted) |
-| **AWS Glue** (Iceberg REST) | ❌ create v1/v2 only (can *read* v3 made elsewhere) | ✅ UC federates to Glue | ⚠️ limited | ✅ | ✅ | ✅ (Lake Formation) | ❌ | **Managed** (AWS; pay per request + storage) |
-| **AWS S3 Tables** | ✅ **v3 GA** | ✅ via Glue / SageMaker Lakehouse federation | ⚠️ verify | ✅ (REST) | ✅ | ✅ (LF / SageMaker) | ❌ | **Managed / paid** (AWS service; data stays open Iceberg on S3) |
-| **Apache Polaris** | ✅ v3 (1.4, 2026) + view federation + cred vending | ❌ (no UC federation to Polaris) | ✅ | ✅ | ✅ | ✅ | ❌ | **Open-source** (Apache TLP); managed options exist (e.g. Snowflake Open Catalog, paid) |
-| **Unity Catalog** | ✅ v3 GA | ✅ native (it *is* UC) | ✅ | ⚠️ read+append only (no update/delete) | ✅ | ✅✅ | ❌ | **Managed / paid** (Databricks); OSS core (open-source Unity Catalog) with fewer features |
+Every Iceberg catalog worth evaluating, split by open-source (meets R3) vs managed/paid (fails R3, fallback
+only). Legend: ✅ yes · ⚠️ partial / verify · ❌ no · **TEST** = must be validated empirically (v3+VARIANT
+end-to-end is bleeding-edge and uneven across catalogs — see §4).
 
-*(⚠️ = supported-but-verify or partial.)*
+### 3a. Open-source catalogs (meet R3)
+
+| Catalog | v3 + VARIANT over REST | External R/W (Trino/Spark) | Databricks access | Views | Branching | RBAC / cred vending | Hosting / notes |
+| :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
+| **Apache Polaris** | **TEST** — v3 rides on the engine; "catalog not the bottleneck," but VARIANT end-to-end maturity is uneven → verify | ✅ REST | manual attach (no UC federation) | ✅ | ❌ | ✅ RBAC + cred vending | JVM service; self-host on K8s. Apache TLP (Feb 2026). Also core of Snowflake Open Catalog / Dremio. |
+| **Lakekeeper** | **TEST** — REST broker; depends on the Iceberg lib it ships | ✅ REST | manual attach | ✅ (+ stats) | ❌ | ✅ OpenFGA + OPA/Trino + cred vending (S3/GCS/ADLS+STS) | **Rust** single binary, ms startup, K8s helm/HA. Apache-2.0. Lean, authz-strong. |
+| **Apache Gravitino** | ❌/**TEST** — variant create → **HTTP 406** on JDBC backend (Iceberg 1.10.1); end-to-end variant incomplete | ✅ REST | manual attach | ⚠️ | ❌ | ✅ | Federated metadata lake (unifies Hive/PG/Kafka/Iceberg/…). 1.2.0 (Mar 2026). |
+| **Nessie — REST** | ❌ **v2 only; v3 not supported** (500 on format-version update) | ✅ REST (v2) | manual attach (v2) | ✅ | ✅✅ | ❌ (Trino RBAC/OPA + OAuth2) | Self-host. Our current catalog. |
+| **Nessie — Native** (our PoC) | v3 **Trino-only** (not cross-engine) | ❌ external CRUD blocked | ❌ | ❌ | ✅✅ | ❌ | Self-host. |
+| **Hive Metastore** | ❌ (legacy; no native REST, no v3) | ⚠️ via bridge | ⚠️ | ❌ | ❌ | ❌ | Legacy; not a fit. |
+| **JDBC catalog / reference REST fixture** (`iceberg-rest-fixture`) | ❌/**TEST** — JDBC-backed; likely same variant gap as Gravitino | ✅ (dev) | manual attach | ⚠️ | ❌ | ❌ | **Dev/CI only, not production.** What our local MinIO PoC used. |
+
+### 3b. Managed / paid catalogs (fail R3 — fallback only, needs business approval)
+
+| Catalog | v3 + VARIANT | External R/W | Databricks access | Views | RBAC | Notes |
+| :-- | :-- | :-- | :-- | :-- | :-- | :-- |
+| **AWS S3 Tables** | ✅ **v3 GA** | ✅ REST (Trino/Spark) | ✅ via Glue / SageMaker Lakehouse federation | ⚠️ verify | ✅ (LF/SageMaker) | AWS-native, managed/paid. **Strongest paid fallback** (data stays open Iceberg on S3). |
+| **AWS Glue** | ❌ REST create v1/v2 only | ✅ REST | ✅ UC federates to Glue | ⚠️ | ✅ (Lake Formation) | Managed; fails v3. |
+| **Unity Catalog** | ✅ v3 GA | ⚠️ Trino read+append only | ✅ native | ✅ | ✅✅ | Databricks/Azure-managed (OSS core exists); reverse cloud. |
+| **Snowflake Open Catalog** | ✅ (managed **Polaris**) | ✅ REST | manual attach | ✅ | ✅ | Snowflake-hosted Polaris; paid. |
+| **Google BigLake Metastore** | ⚠️ verify | ✅ REST | ⚠️ | ⚠️ | ✅ (IAM) | GCP-native — **wrong cloud** for an AWS shop. |
+| **Dremio (Open) Catalog** | ✅ (Polaris core) | ✅ REST | manual attach | ✅ | ✅ | Managed Dremio + OSS Polaris core; paid tier. |
+
+*(⚠️ = supported-but-verify or partial. "manual attach" = Databricks non-UC-cluster Spark REST attach — access
+without UC governance; see §5.)*
 
 ---
 
 ## 4. Analysis against the three hard requirements (R1 v3+VARIANT · R2 external read/write · R3 open-source)
 
-Adding **R3 (open-source)** eliminates the managed catalogs, which reshapes the answer:
+**R3 (open-source) makes the managed catalogs fallbacks only** (S3 Tables, Unity Catalog, Glue, Snowflake Open
+Catalog, BigLake, Dremio). Among the **open-source** options:
 
-- **AWS S3 Tables** — meets R1 + R2, but it's an **AWS-managed/paid** service → **fails R3**. Out.
-- **Unity Catalog** — meets R1, but managed/paid → **fails R3** (and external Trino write is append-only). Out.
-- **AWS Glue** — managed → **fails R3** (and REST create is v1/v2 → also fails R1). Out.
-- **Nessie** — open-source (R3 ✅) but **fails R1** (REST has no v3) and **fails R2** (native blocks external
-  CRUD; no Databricks federation). Out.
-- **Apache Polaris** — **open-source (Apache TLP → R3 ✅)**, **v3 + VARIANT over REST (R1 ✅)**, and
-  **external Trino/Spark read/write over REST (R2 ✅ for open engines)**. The **only** option that clears all
-  three. Views ✅ (soft bonus); no branching (soft, relaxed).
+- **Nessie** — fails R1 (REST no v3) and the Databricks-CRUD side of R2. Out.
+- **Hive Metastore / JDBC / reference REST fixture** — no v3 or dev-only. Out.
+- **Apache Gravitino** — open & federated, but VARIANT create currently **fails (HTTP 406, JDBC backend)** →
+  fails R1 today; re-test on a newer build.
+- **Apache Polaris** and **Lakekeeper** — the two viable open-source REST catalogs: open (R3 ✅), external
+  Trino/Spark read/write over REST (R2 ✅), v3 that "rides on the engine." **These are the candidates to test
+  for R1.**
 
-The one caveat on Polaris is the **Databricks** slice of R2: Databricks can't *UC-federate* to a generic REST
-catalog (Nessie or Polaris). But that's a Databricks-federation limitation, not a Polaris capability gap —
-external Spark reads Polaris v3+VARIANT fine, and Databricks can still read it by other means (see §5).
-Importantly, **our earlier "Databricks can't read v3+VARIANT" tests were run against Nessie, which never served
-v3** — so they don't prove anything about reading a *real* v3 catalog like Polaris. That must be re-tested.
+**The critical caveat — v3+VARIANT is bleeding-edge and unproven across catalogs.** The Iceberg *library* marks
+VARIANT "supported," but **end-to-end support through a catalog backend is incomplete/uneven in early-mid 2026**
+(Gravitino's JDBC-backed REST server returns HTTP 406 on a variant create; Nessie doesn't do v3 at all). So we
+**cannot** conclude from docs that Polaris or Lakekeeper serve v3+VARIANT cleanly — it must be **tested
+empirically** on each (exactly your lead's ask). It is entirely possible that **no** open-source catalog cleanly
+delivers v3+VARIANT today, in which case the paid AWS-native **S3 Tables** (v3 GA) is the fallback — needing
+business approval.
+
+Databricks caveat (unchanged): no open-source catalog is UC-*federatable*, but Databricks still *accesses* any
+REST catalog via the manual non-UC Spark attach (§5) — access ≠ UC governance. And our earlier
+"Databricks can't read v3+VARIANT" results were against **Nessie, which never served v3** — invalid for judging
+a real v3 catalog; re-test against whichever OSS catalog passes R1.
 
 ---
 
 ## 5. Recommendation
 
-**Adopt Apache Polaris as the AWS Iceberg catalog** (replacing Nessie for the production path). It is the
-**only** evaluated catalog that satisfies all three hard requirements: **open-source** (Apache top-level
-project), **v3 + VARIANT over REST**, and **external Trino/Spark read/write**. It also keeps Iceberg **views**
-(soft bonus); the only thing given up vs Nessie is **git-like branching**, a relaxed soft requirement (the
-pipeline uses a single `main` branch today).
+**Run the feature-test plan (§7) on the two viable open-source REST catalogs — Apache Polaris and Lakekeeper —
+and pick the one that passes v3+VARIANT end-to-end.** Both clear R2 (external Trino/Spark R/W over REST) and R3
+(open-source); **R1 (v3+VARIANT) is the make-or-break and must be proven empirically on each** — it cannot be
+asserted from docs (§4). Leanings to confirm by test: **Lakekeeper** for a lean, fast, authz-strong Rust/K8s
+catalog; **Apache Polaris** for the broader-ecosystem "governance layer" (with a managed escape hatch via
+Snowflake Open Catalog later). Re-check **Gravitino** on a current build (its variant gap may close). Views come
+with both (soft bonus); branching is given up (soft, relaxed — the pipeline uses a single `main` branch).
+
+**If none of the open-source catalogs pass v3+VARIANT cleanly** in the PoC, the fallback is the paid AWS-native
+**S3 Tables** (v3 GA, Databricks-federatable) — which needs business approval. Naming this makes the
+open-source-or-paid fork explicit, per your lead's framing.
 
 **Writer engine.** Keep Trino/dbt for SQL transforms, but for the **v3/VARIANT writes** prefer **Spark
 (AWS EMR/K8s)** — Trino's v3 support is experimental. Validate whether Trino-on-Polaris v3 write is reliable
@@ -127,17 +159,57 @@ catalog decision gates the dbt change).
 
 ---
 
-## 7. Open items / next steps (short validation PoC)
+## 7. Evaluation & feature-test plan (open-source PoC)
 
-1. **Stand up Apache Polaris** (self-hosted on AWS); point Trino + Spark at it via the Iceberg REST catalog.
-2. **v3+VARIANT write PoC:** create a v3+VARIANT table in Polaris; write from **Spark** and from **Trino**;
-   confirm which writer is reliable for v3.
-3. **Databricks read PoC (the decisive one):** manual Spark attach on **DBR 18** to Polaris → read a v3+VARIANT
-   table (the test we could never validly run against Nessie). If it works, Databricks-direct is solved; if
-   not, fall back to external Spark or the VARIANT-free projection.
-4. **Migration assessment:** Nessie → Polaris (dbt profile/catalog config, table re-register/recreate); confirm
-   no dependence on Nessie branching.
-5. **RBAC / governance / views:** confirm Polaris RBAC + Iceberg view support meet the production bar.
+Purpose: decide by **evidence**, not docs. Test each open-source candidate against the feature checklist; pick
+the one that passes the hard requirements; if none do, escalate for the paid fallback. **Candidates: Apache
+Polaris, Lakekeeper, and (re-check) Gravitino.** Use the reference REST fixture first as a fast pre-check of the
+v3+VARIANT question.
+
+### 7a. Feature checklist (run on every candidate)
+
+| # | Feature (→ req) | How to test | Pass = |
+| :-- | :-- | :-- | :-- |
+| 1 | **v3 CREATE** (R1) | `CREATE TABLE … WITH (format_version=3)`; check it's really v3 | not silently downgraded to v2 |
+| 2 | **VARIANT column** (R1) | table with a `variant` column; `INSERT CAST(JSON… AS VARIANT)`; read `payload['k']` | create + insert + read all succeed |
+| 3 | **Trino R/W** (R2) | run `scripts/test_trino_v3_variant.sql` against the catalog | all steps pass |
+| 4 | **Spark R/W** (R2) | Spark 4.x + Iceberg 1.11 → create/insert/read v3+VARIANT | round-trips |
+| 5 | **Databricks read** (R2) | manual non-UC Spark attach on **DBR 18** → read a v3+VARIANT table | rows return |
+| 6 | **Row-level DML** | UPDATE / DELETE / MERGE on a v3 table | succeed |
+| 7 | **Views** (soft) | `CREATE VIEW` + read | works |
+| 8 | **RBAC / credential vending** | define a grant; vend scoped S3 creds | enforced |
+| 9 | **Deploy on AWS / K8s + HA** | run on target infra | runs; HA option exists |
+| 10 | **Auth (OAuth2)** | secure the endpoint | works |
+
+Hard-requirement gate = **#1, #2, #3/#4** (and #5 or a read fallback per §5). #6–#10 are tie-breakers.
+
+### 7b. Per-candidate quick-start
+- **Reference fixture (pre-check, ~10 min):** run `apache/iceberg-rest-fixture` + MinIO, point Trino at it, run
+  `test_trino_v3_variant.sql`. If VARIANT create fails here (JDBC backend), expect the same on other
+  JDBC-backed catalogs — a cheap early signal.
+- **Apache Polaris:** self-host (Docker/Helm) over S3 → Trino + Spark → run #1–#8.
+- **Lakekeeper:** single Rust binary / Helm over S3 → Trino (via OPA) + Spark → run #1–#8.
+- **Apache Gravitino:** run its Iceberg REST server over S3 → focus #2 (the variant-406) on a current build.
+
+### 7c. Results matrix (fill during the PoC)
+
+| Feature | Polaris | Lakekeeper | Gravitino | S3 Tables (paid ref) |
+| :-- | :-- | :-- | :-- | :-- |
+| 1 v3 CREATE | | | | ✅ |
+| 2 VARIANT | | | | ✅ |
+| 3 Trino R/W | | | | ✅ |
+| 4 Spark R/W | | | | ✅ |
+| 5 Databricks read | | | | ✅ (federation) |
+| 6 DML | | | | ✅ |
+| 7 Views | | | | ⚠️ |
+| 8 RBAC / cred vending | | | | ✅ |
+
+### 7d. Decision rule
+- **≥1 open-source catalog passes the gate (#1–#4, #5-or-fallback)** → adopt it (tie-break on RBAC/ops/ecosystem).
+  Open-source requirement met.
+- **No open-source catalog passes v3+VARIANT (#1–#2)** → escalate to business for **AWS S3 Tables** (paid) approval.
+- Then follow through: migration (Nessie → chosen catalog + dbt catalog config), the dbt VARIANT guardrail (§6),
+  and the Databricks read approach (§5).
 
 ---
 
@@ -148,4 +220,7 @@ catalog decision gates the dbt change).
 - AWS — S3 Tables support Iceberg v3: https://bigdataboutique.com/blog/apache-iceberg-on-aws
 - AWS — Access S3 Iceberg tables from Databricks via Glue Iceberg REST / SageMaker Lakehouse: https://aws.amazon.com/blogs/big-data/access-amazon-s3-iceberg-tables-from-databricks-using-aws-glue-iceberg-rest-catalog-in-amazon-sagemaker-lakehouse/
 - Apache Polaris — v3, views, credential vending (1.4, 2026): https://dev.to/alexmercedcoder/the-state-of-apache-iceberg-catalogs-in-june-2026-265e
+- Lakekeeper — Rust Iceberg REST catalog (authz, cred vending, views, K8s): https://github.com/lakekeeper/lakekeeper
+- Apache Gravitino — VARIANT create fails HTTP 406 on JDBC backend (Iceberg 1.10.1): https://github.com/apache/gravitino/issues/10994
+- Catalog landscape / picks by use case (2026): https://dev.to/alexmercedcoder/the-best-data-lakehouse-tools-for-apache-iceberg-in-2026-a-complete-breakdown-5fd
 - Trino 483 — Iceberg VARIANT / v3 experimental: https://trino.io/docs/current/connector/iceberg.html
