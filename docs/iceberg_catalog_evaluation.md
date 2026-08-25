@@ -79,6 +79,34 @@ end-to-end is bleeding-edge and uneven across catalogs — see §4).
 *(⚠️ = supported-but-verify or partial. "manual attach" = Databricks non-UC-cluster Spark REST attach — access
 without UC governance; see §5.)*
 
+### 3c. How each catalog stores its metadata (the pointer store)
+
+Reminder — two layers of metadata: **Iceberg table metadata** (`metadata.json`, manifests) always lives in
+**S3** next to the data and is self-describing; the **catalog metadata** below is the small *pointer store*
+(table → current-metadata pointer, namespaces, and for feature-rich catalogs also views / roles / grants /
+principals). This pointer store is the stateful component you operate and back up. Losing it does **not** lose
+data (tables are re-registerable from their S3 metadata), but you'd lose the governance model.
+
+| Catalog | Metadata-store backend | Durability / ops note |
+| :-- | :-- | :-- |
+| **Apache Polaris** | Relational **JDBC — Postgres** (persistent); in-memory H2/EclipseLink (dev) | In-memory is ephemeral → use Postgres for real; back it up (RDS in prod). No embedded/RocksDB option. |
+| **Lakekeeper** | **Postgres ≥ 15 (required)** | No embedded option at all. Postgres on a durable volume / managed RDS. |
+| **Apache Gravitino** | **JDBC — H2 / MySQL / Postgres** | Its Iceberg REST server uses a JDBC catalog backend. |
+| **Nessie** | **Pluggable version store**: **RocksDB** (embedded), JDBC/Postgres, DynamoDB, MongoDB, Cassandra/BigTable, in-memory | Our PoC = **RocksDB on the VM's EBS** — single-node (SPOF) unless externalized to RDS/DynamoDB. |
+| **Hive Metastore** | **RDBMS — Postgres / MySQL / Derby** | Classic HMS relational backend. |
+| **JDBC catalog / reference REST fixture** | **SQLite / JDBC** (or in-memory) | Dev/CI only. |
+| **AWS Glue** | **AWS-managed** (no DB you run) | Serverless; AWS operates it. |
+| **AWS S3 Tables** | **AWS-managed** | Serverless; AWS operates it (auto-maintenance included). |
+| **Unity Catalog** | **Databricks-managed** control plane (OSS UC core = RDBMS: Postgres/MySQL) | Managed in the Databricks product. |
+| **Snowflake Open Catalog** | **Snowflake-managed** (Polaris under the hood) | Managed Polaris. |
+| **Google BigLake Metastore** | **GCP-managed** | Serverless; GCP operates it. |
+| **Dremio (Open) Catalog** | **Dremio-managed** (Polaris core) | Managed. |
+
+Takeaway for our PoC: **Nessie** is the only one offering embedded RocksDB-on-EBS; **Polaris** and **Lakekeeper**
+both want **Postgres** (Lakekeeper mandatory, Polaris for persistence). So the catalog PoC adds a small Postgres
+(one container, a database each) on an EBS-backed volume — the durability analog of Nessie's RocksDB — moving to
+managed RDS for production.
+
 ---
 
 ## 4. Analysis against the three hard requirements (R1 v3+VARIANT · R2 external read/write · R3 open-source)
