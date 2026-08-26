@@ -160,9 +160,12 @@ Legend: ✅ pass · ⏳ pending · 🚧 blocked · ➖ not applicable. Tested on
 | Credential vending (pass 2) | ⏳ needs roleArn | ➖ needs STS role (remote signing not consumed by Trino 483) |
 | Deploy on VM | ✅ running | ✅ running |
 
-**Read so far:** both OSS catalogs meet the v3+VARIANT + external-Trino-R/W hard requirements that Nessie failed.
-Neither did credential vending in this PoC (no IAM role) — both fell back to Trino's own S3 keys. The decisive
-Databricks-CRUD test (incl. v3+VARIANT) is pending the 8181/8282 firewall opening.
+**Read so far:** both OSS catalogs fully pass the Trino-side suite — v3 CREATE, VARIANT create/insert/read,
+row-level DML, views, DROP, and external-Trino-R/W — the hard requirements Nessie failed. Neither did credential
+vending in this PoC (no IAM role) — both fell back to Trino's own S3 keys. Only real behavioural differences so
+far: Polaris needs `DROP_WITH_PURGE_ENABLED` for file cleanup on drop, while Lakekeeper purges via a background
+task; Lakekeeper's native S3 remote signing isn't consumed by Trino 483 (own-keys instead). The decisive
+Databricks-CRUD test (incl. v3+VARIANT) is pending the 8181/8282 firewall opening — that's the tiebreaker.
 
 **Decision** (per `iceberg_catalog_evaluation.md` §7d): a catalog passing v3 CREATE + VARIANT + Trino/Spark R/W
 (+ Databricks read or fallback) → adopt it. Neither → escalate for the paid AWS S3 Tables fallback.
