@@ -2,12 +2,12 @@
 -- Catalog PoC — feature tests (run in DBeaver on Trino, once per catalog)
 --
 -- Replace <CATALOG> with the Trino catalog name for the catalog under test:
---   * polaris      (uses poc/catalog/trino/polaris.properties)
---   * lakekeeper   (uses poc/catalog/trino/lakekeeper.properties)
+--   * polaris      (uses infra/trino/catalog/polaris.properties)
+--   * lakekeeper   (uses infra/trino/catalog/lakekeeper.properties)
 -- Replace <SCHEMA> with a test namespace (e.g. ctv_catalog_poc).
 --
 -- Covers the hard/soft requirements that are testable in Trino SQL: v3, VARIANT, DML, views.
--- RBAC and credential vending are validated separately (see poc/catalog/README.md §RBAC / §Cred vending).
+-- RBAC and credential vending are validated separately (see docs/catalog_poc_runbook.md Part A §5-6).
 -- Run top to bottom; note pass/fail for each numbered block in the results matrix.
 -- ============================================================
 
@@ -66,5 +66,5 @@ DROP TABLE IF EXISTS <CATALOG>.<SCHEMA>.zz_feat_test;
 --  5 passes  -> row-level DML on v3 works.
 --  6 passes  -> Iceberg views work (soft req).
 --  Trino connected with NO S3 keys (vended-credentials-enabled=true) -> credential vending works.
---  RBAC: validate per the catalog's model (Polaris grants / Lakekeeper OpenFGA+OPA) -- see README.
+--  RBAC: validate per the catalog's model (Polaris grants / Lakekeeper OpenFGA+OPA) -- see runbook.
 -- ============================================================
