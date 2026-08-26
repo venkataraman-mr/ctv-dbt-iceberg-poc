@@ -6,10 +6,16 @@ This document specifies how Databricks Spark attaches to and reads that table (v
 Catalog**), the read/merge logic, the networking/security prerequisites, and how it was tested. It's the
 blueprint for the Databricks-side implementation.
 
-> **Status (current):** we are validating **connectivity only** first — see
-> `databricks/connectivity_test_crosscloud.py` (read-only) and `databricks/README.md`. The full production
-> notebook (last-seen + first-seen-occurrence-id MERGEs) and its offline logic test are **deferred**; the
-> logic below is the design to implement once the cross-cloud read is confirmed.
+> **Status (current):** connectivity was validated first — see `databricks/connectivity_test_crosscloud.py`
+> (read-only) and `databricks/README_catalog_crosscloud.md`. The full production notebook (last-seen +
+> first-seen-occurrence-id MERGEs) and its offline logic test are **deferred**; the logic below is the design to
+> implement once the cross-cloud read is confirmed.
+>
+> **Catalog note:** this doc describes the read via **Nessie**, the original catalog. The catalog PoC has since
+> **validated two open-source v3+VARIANT catalogs — Polaris and Lakekeeper** (both pass; the pick between them is
+> still open — see `docs/iceberg_catalog_evaluation.md`), and **ruled Nessie out**. When this piece is
+> implemented the Databricks Spark attach uses the chosen catalog's REST endpoint/auth instead of Nessie; the
+> mechanism is the same manual non-UC Spark attach — see `databricks/README_catalog_crosscloud.md`.
 
 Related: `docs/ctv_productionization_crosscloud_design.md` (the overall cross-cloud plan),
 `docs/uc_managed_iceberg_trino_write_capabilities.md` (engine capability findings).
@@ -35,10 +41,12 @@ writer-of-record; only the *source read* is remote.
 
 ---
 
-## 2. Attach method — Nessie Iceberg REST Catalog (chosen)
+## 2. Attach method — Iceberg REST catalog (Nessie shown; same mechanism for Polaris/Lakekeeper)
 
-Databricks Spark registers the AWS catalog as a generic **Iceberg REST catalog** pointed at Nessie's REST
-endpoint, with the branch carried in the URI path and `S3FileIO` reading the data files directly:
+Databricks Spark registers the AWS catalog as a generic **Iceberg REST catalog** and reads data files via
+`S3FileIO`. The Nessie-era config is shown below; for the chosen catalog swap the `uri`/`warehouse`/auth per
+`databricks/README_catalog_crosscloud.md` (Polaris: `…:8181/api/catalog` + OAuth2; Lakekeeper: `…:8282/catalog`
++ bearer token). The attach mechanism (non-UC cluster, `SparkCatalog` + `type=rest`, `S3FileIO`) is identical.
 
 ```
 spark.sql.catalog.aws_occ                    = org.apache.iceberg.spark.SparkCatalog

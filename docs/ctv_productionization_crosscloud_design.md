@@ -102,9 +102,12 @@ Iceberg incremental-snapshot / changelog read. Rationale:
 timestamp filter captures inserts, updates, *and* deletes (a delete is a row whose `delete_flag` flipped and
 whose timestamp moved). The downstream MERGE is idempotent on re-processed windows.
 
-**Cross-cloud attach (to decide during build):** either a **non-UC Databricks cluster** with the Iceberg +
-Nessie runtime and AWS S3 creds, or **Lakehouse Federation to the Nessie Iceberg REST catalog**. Egress is
-bounded because the watermark filter returns only changed rows.
+**Cross-cloud attach (validated in the catalog PoC):** a **non-UC Databricks cluster** with a manual Spark
+Iceberg REST attach to the AWS new-stack catalog (**Polaris/Lakekeeper**, not Nessie) + AWS S3 creds. Unity
+Catalog **Lakehouse Federation to a generic REST catalog is not available** (only Glue/HMS/Snowflake Horizon), so
+the manual attach is the path — proven for full CRUD incl. v3+VARIANT on DBR 18 LTS
+(`databricks/README_catalog_crosscloud.md`). Egress is bounded because the watermark filter returns only changed
+rows.
 
 ---
 
@@ -148,8 +151,9 @@ Ordered by risk. These are the things to validate during development, not open d
   media-generic (nullable per-media fields) so one shared table serves CTV/AVOD/Digital/TV.
 - Whether `creative_unique_urls` dedup scope is **global** or **per-media** (drives whether the same `url_hash`
   can arrive from two platforms' Job 1s, and how Job 2 dedups).
-- The cross-cloud **attach method** for the SYNC job's AWS Iceberg read (non-UC cluster vs. Nessie-REST
-  federation).
+- ~~The cross-cloud **attach method** for the SYNC job's AWS Iceberg read.~~ **Resolved:** non-UC DBR 18 manual
+  Spark REST attach against the chosen Polaris/Lakekeeper catalog (UC federation to a generic REST catalog isn't
+  available). Validated in the catalog PoC.
 - Trino **IRC commit-conflict/retry** behavior (item 4.1) — benchmark early.
 
 ---

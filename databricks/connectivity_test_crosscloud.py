@@ -9,7 +9,7 @@
 # MAGIC Run the cells top to bottom. If the last cell prints rows, the cross-cloud read path works and the
 # MAGIC full sync (`creative_sync_crosscloud.py`) is just SQL on top of this.
 # MAGIC
-# MAGIC **Before running** (one-time, see `README.md`): non-UC cluster + Iceberg Maven libs whose version
+# MAGIC **Before running** (one-time, see `README_catalog_crosscloud.md`): non-UC cluster + Iceberg Maven libs whose version
 # MAGIC MATCHES the cluster's Spark (Spark 3.5 -> `iceberg-spark-runtime-3.5_2.12:1.9.1` + `iceberg-aws-bundle:1.9.1`);
 # MAGIC network path from Databricks to the Nessie endpoint + S3.
 # MAGIC

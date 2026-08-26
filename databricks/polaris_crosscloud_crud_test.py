@@ -10,7 +10,7 @@
 # MAGIC the Nessie connectivity test, but with **OAuth2** and **own S3 keys** (Polaris runs with credential
 # MAGIC sub-scoping OFF for the PoC, so it does not vend S3 creds).
 # MAGIC
-# MAGIC **Cluster requirements** (see README_polaris_crosscloud.md):
+# MAGIC **Cluster requirements** (see README_catalog_crosscloud.md):
 # MAGIC  * **DBR 18 LTS or newer** (newest bundled Iceberg — best chance at VARIANT decode).
 # MAGIC  * **Non-UC access mode** (so custom `spark.sql.catalog.*` configs are allowed).
 # MAGIC  * Firewall/SG must allow this cluster -> `AWS_VM_HOST:8181` (Nessie's 19120 rule does NOT cover 8181).
@@ -67,7 +67,7 @@ SCHEMA  = "ctv_catalog_poc"             # namespace to test in
 # MAGIC ## 2. Catalog registration — done in CLUSTER Spark config, NOT here
 # MAGIC `spark.sql.extensions` is a **static** Spark config and cannot be set at runtime on Databricks
 # MAGIC (`CANNOT_MODIFY_STATIC_CONFIG`). So the `polaris` catalog is registered in
-# MAGIC **Cluster → Edit → Advanced options → Spark → Spark config** (see README_polaris_crosscloud.md), then the
+# MAGIC **Cluster → Edit → Advanced options → Spark → Spark config** (see README_catalog_crosscloud.md), then the
 # MAGIC cluster is restarted. This cell only verifies the catalog is visible.
 
 # COMMAND ----------

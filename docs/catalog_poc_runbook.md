@@ -1,7 +1,15 @@
-# Catalog PoC runbook — Polaris & Lakekeeper on the VM
+# Catalog PoC runbook — Iceberg catalogs on AWS (Nessie, Polaris, Lakekeeper)
 
-Stand up Apache Polaris and Lakekeeper **alongside the existing stack** (one Trino, many catalogs) and test the
-requirements. Decision framework + landscape: [`iceberg_catalog_evaluation.md`](iceberg_catalog_evaluation.md).
+Stand up and test open-source Iceberg REST catalogs on the single AWS VM, **alongside the existing stack** (one
+Trino, many catalogs). The incumbent **Nessie** is the baseline that failed the v3+VARIANT hard requirement;
+**Apache Polaris** and **Lakekeeper** are the candidates that replace it. This runbook covers deploy → bootstrap →
+wire Trino → feature tests → cross-cloud (Databricks) for both candidates, plus the config fixes we hit along the
+way (see **Gotchas & fixes** at the end). Decision framework + full catalog landscape:
+[`iceberg_catalog_evaluation.md`](iceberg_catalog_evaluation.md). Databricks cross-cloud details:
+[`../databricks/README_catalog_crosscloud.md`](../databricks/README_catalog_crosscloud.md).
+
+**Status (2026-08-26):** both Polaris (1.7.0) and Lakekeeper (0.13.3) **pass every hard requirement** — v3+VARIANT,
+external Trino R/W, and Databricks cross-cloud CRUD incl. v3+VARIANT. Nessie is ruled out. See the results matrix.
 
 ## Design (settled)
 - **One Trino, many catalogs** — add `polaris` (then `lakekeeper`) next to the existing `iceberg` / `iceberg_rest`
@@ -28,6 +36,8 @@ requirements. Decision framework + landscape: [`iceberg_catalog_evaluation.md`](
 | `scripts/lakekeeper.properties.staged` | Trino → Lakekeeper catalog config |
 | `scripts/catalog_feature_tests.sql` | v3+VARIANT + DML + views tests (`<CATALOG>`/`<SCHEMA>` template) |
 | `scripts/catalog_feature_tests_polaris.sql` / `_lakekeeper.sql` | Pre-filled per-catalog test scripts (DBeaver) |
+| `scripts/polaris_crossengine_verify.sql` / `lakekeeper_crossengine_verify.sql` | Trino-side cross-engine round-trip with Databricks |
+| `../databricks/README_catalog_crosscloud.md` | Databricks cross-cloud runbook (Nessie/Polaris/Lakekeeper) + notebooks |
 
 ---
 
@@ -88,7 +98,7 @@ wiring needs the principal creds from step 3. The detailed commands for each are
    (`iceberg.rest-catalog.oauth2.credential=<id>:<secret>`), then activate it:
    ```bash
    cp scripts/polaris.properties.staged infra/trino/catalog/polaris.properties
-   docker compose restart trino
+   docker compose up -d trino          # `up -d` (not `restart`) so the new POLARIS_OAUTH2_CREDENTIAL env loads
    docker exec -i trino trino --execute "SHOW CATALOGS"     # expect `polaris` in the list
    ```
 4. **Feature tests** (DBeaver on Trino): run `scripts/catalog_feature_tests.sql` with `<CATALOG>` = `polaris`,
@@ -97,6 +107,16 @@ wiring needs the principal creds from step 3. The detailed commands for each are
    `polaris_bootstrap.sh`); connect Trino as it; verify SELECT works but INSERT is denied.
 6. **Credential vending (pass 2):** flip `polaris.properties` to the vended-creds block (commented in the file),
    restart Trino, re-run the tests with no S3 keys.
+
+**Polaris storage config (already set in `docker-compose.yml`, learned the hard way):**
+- `polaris.features."SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION" = true` — without an IAM role, Polaris otherwise
+  tries `sts:AssumeRole` to vend scoped creds on table create and fails with **"Failed to create transaction"**.
+  This flag makes it skip STS and use its own ambient AWS creds; Trino/Spark then use their own keys.
+- `polaris.features."DROP_WITH_PURGE_ENABLED" = true` — Trino's `DROP` sends `purgeRequested=true`; Polaris blocks
+  purge by default (**403 "Unable to purge entity"**). Enabling it gives clean teardown. (Production may leave
+  this OFF so a DROP only removes the catalog pointer and S3 data survives.)
+- Trino's OAuth2 credential is read from `${ENV:POLARIS_OAUTH2_CREDENTIAL}` (in `.env`, gitignored) so no secret
+  lands in a committed file. Recreate Trino with `docker compose up -d trino` (not `restart`) when adding that env.
 
 ## Part B — Lakekeeper
 
@@ -119,26 +139,57 @@ role) — Lakekeeper then does S3 **remote signing** (the Polaris skip-subscopin
    ```
    ⚠️ Image tag + `LAKEKEEPER__*` env are **version-specific** — if it doesn't start, reconcile against
    docs.lakekeeper.io and paste `docker logs lakekeeper`.
-2. **Bootstrap + warehouse:**
+2. **Bootstrap + warehouse:** the script needs AWS creds in the shell, so source `.env` first. Re-running is
+   safe — the server-bootstrap step returns a harmless `CatalogAlreadyBootstrapped` (400) and the script
+   continues to (re)create the warehouse.
    ```bash
+   set -a; source .env; set +a
    bash scripts/lakekeeper_bootstrap.sh    # bootstraps the server + creates warehouse `ctv_lakekeeper`
    ```
+   ⚠️ The script uses `LK_`-prefixed variables (`LK_WAREHOUSE`, `LK_BUCKET`, `LK_PREFIX`) precisely because a
+   plain `WAREHOUSE` collides with Nessie's `WAREHOUSE` in `.env` — with the collision the warehouse gets named
+   `s3://…/warehouse` instead of `ctv_lakekeeper`.
 3. **Wire Trino:**
    ```bash
    cp scripts/lakekeeper.properties.staged infra/trino/catalog/lakekeeper.properties
    docker compose up -d trino
    docker exec -i trino trino --execute "SHOW CATALOGS"     # expect `lakekeeper`
    ```
+   Trino uses its **own S3 keys** here: Lakekeeper's warehouse (access-key + STS off) does S3 **remote signing**,
+   which **Trino 483 does not consume** (it fails with `accessKey is null` if asked to). So `lakekeeper.properties`
+   sets `fs.native-s3` + `s3.region` and does *not* enable vended credentials.
 4. **Feature tests:** run `scripts/catalog_feature_tests_lakekeeper.sql` (or the `<CATALOG>` template with
    `lakekeeper` / `ctv_catalog_poc`) top-to-bottom in DBeaver. Record pass/fail per block in the matrix.
-5. **RBAC + cross-cloud** as for Polaris (Lakekeeper uses OpenFGA/Cedar authz — soft req; the Databricks
-   cross-cloud test is on hold pending the 8181/8282 firewall opening).
+5. **RBAC + cross-cloud:** Lakekeeper authz is OpenFGA/Cedar (soft req). Databricks cross-cloud CRUD incl.
+   v3+VARIANT **passed** — see Part C and `../databricks/README_catalog_crosscloud.md`. Note the **BASE_URI**
+   requirement below.
 
-## Part C — Cross-engine (Spark + Databricks)
-- **Spark** (EMR/K8s or local Spark 4.x + iceberg 1.11): `spark.sql.catalog.X.type=rest` at the catalog uri +
-  warehouse → create/read v3+VARIANT.
-- **Databricks** (non-UC DBR 18, manual attach): same REST config → read a v3+VARIANT table. **The decisive
-  Databricks-read test against a real v3 catalog** (never valid against Nessie).
+**Lakekeeper BASE_URI (the cross-cloud gotcha):** Lakekeeper advertises `LAKEKEEPER__BASE_URI` in `GET /config`,
+and a *fresh* external client (Databricks) **follows it** — so for the Databricks test `BASE_URI` must be the VM
+**public** URL (`http://<VM>:8282`), set via `LAKEKEEPER_BASE_URI` in `.env`. Trino does **not** follow it (it
+keeps its configured internal `LAKEKEEPER_URI=http://lakekeeper:8181/catalog`), so **BASE_URI public + Trino URI
+internal** lets both engines work at once. Do NOT point Trino's URI at the public IP — the VM can't reach its own
+public 8282 (SG allows only Databricks' source) and Trino hangs.
+
+## Part C — Cross-cloud / cross-engine (Databricks + Spark)
+
+**Databricks (done — PASS for both catalogs).** Non-UC DBR 18 LTS cluster + manual Spark Iceberg REST attach
+(UC can't federate a generic REST catalog). Full CRUD incl. **v3+VARIANT** works against both Polaris and
+Lakekeeper, plus cross-engine round-trip (a table one engine writes, the other reads). Full steps, cluster Spark
+config, and per-catalog auth are in [`../databricks/README_catalog_crosscloud.md`](../databricks/README_catalog_crosscloud.md).
+Key points learned:
+- **Cluster Spark config, not the notebook** — `spark.sql.extensions` is a *static* config (`spark.conf.set`
+  fails with `CANNOT_MODIFY_STATIC_CONFIG`); register catalogs in the cluster Spark config and restart.
+- **`client.region` is required** — Iceberg's AWS client factory reads `client.region`, not `s3.region`; without
+  it the executor S3 write fails "Unable to load region from any of the providers".
+- **Own S3 keys** (no vending), same as Trino. Auth: Polaris = OAuth2 `trino_poc` creds; Lakekeeper = static
+  bearer `dummy` (unsecured) + BASE_URI = public.
+- Trino-side cross-engine verification: `scripts/polaris_crossengine_verify.sql` /
+  `scripts/lakekeeper_crossengine_verify.sql`.
+
+**Standalone Spark (EMR/K8s) — not yet run.** Same REST config (`spark.sql.catalog.X.type=rest` at the catalog
+uri + warehouse) would create/read v3+VARIANT. Databricks already exercises the Spark/Iceberg path, so this is a
+low-priority confirmation for the target compute (EMR vs K8s still undecided).
 
 ---
 
@@ -178,6 +229,20 @@ Behavioural differences to weigh for the decision (none block a hard req):
 
 **Decision** (per `iceberg_catalog_evaluation.md` §7d): a catalog passing v3 CREATE + VARIANT + Trino/Spark R/W
 (+ Databricks read or fallback) → adopt it. Neither → escalate for the paid AWS S3 Tables fallback.
+
+## Gotchas & fixes (chronological — what we actually hit)
+| Symptom | Cause | Fix |
+| :-- | :-- | :-- |
+| Polaris token: `relation "polaris_schema.entities" does not exist` | Server doesn't self-create schema | one-shot `polaris_bootstrap` (admin-tool `migrate`/`bootstrap`), idempotent |
+| Polaris `CREATE TABLE` → "Failed to create transaction" (`sts:AssumeRole`) | No IAM role to vend creds | `SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION=true` + own keys |
+| Polaris `DROP` → 403 "Unable to purge entity" | Purge disabled by default | `DROP_WITH_PURGE_ENABLED=true` |
+| Lakekeeper warehouse named `s3://…/warehouse` | `.env` `WAREHOUSE` collided with script var | `LK_`-prefixed script vars |
+| Lakekeeper `CREATE TABLE` → `accessKey is null` | Trino 483 doesn't consume LK remote signing | own keys (`fs.native-s3`), drop vended-credentials |
+| Databricks `spark.conf.set` → `CANNOT_MODIFY_STATIC_CONFIG` | `spark.sql.extensions` is static | put catalog config in the cluster Spark config, restart |
+| Databricks INSERT → "Unable to load region from any of the providers" | Region not read from `s3.region` | add `spark.sql.catalog.X.client.region` |
+| Databricks `UnknownHostException: lakekeeper` | LK advertises internal BASE_URI in `/config` | set `LAKEKEEPER_BASE_URI` to the public URL; keep Trino URI internal |
+| New tables from Trino get a UUID path suffix | `iceberg.unique-table-location=true` (default) | cosmetic; documented (commented) in catalog `.properties` |
+| Firewall: Databricks → 8181/8282 timeouts | SG only had Nessie's 19120 | network team added 8181 (Polaris) + 8282 (Lakekeeper) |
 
 ## Notes
 - `catalog_postgres` + `polaris` are in the main `docker-compose.yml` and start with `docker compose up`. No

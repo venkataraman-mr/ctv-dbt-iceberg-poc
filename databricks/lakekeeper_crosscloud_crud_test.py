@@ -10,7 +10,7 @@
 # MAGIC  * S3 access uses **own keys** (Trino 483 didn't consume Lakekeeper remote signing; we mirror that here).
 # MAGIC    If Databricks' Iceberg client DOES support Lakekeeper remote signing, the own-keys path still works.
 # MAGIC
-# MAGIC Cluster: **DBR 18 LTS+**, **non-UC access mode** (see README_polaris_crosscloud.md — same requirements).
+# MAGIC Cluster: **DBR 18 LTS+**, **non-UC access mode** (see README_catalog_crosscloud.md — same requirements).
 
 # COMMAND ----------
 
@@ -42,7 +42,7 @@ SCHEMA  = "ctv_catalog_poc"
 # MAGIC %md ## 2. Catalog registration — done in CLUSTER Spark config, NOT here
 # MAGIC `spark.sql.extensions` is a **static** Spark config and cannot be set at runtime on Databricks
 # MAGIC (`CANNOT_MODIFY_STATIC_CONFIG`). Register the `lakekeeper` catalog in the **cluster Spark config** (see
-# MAGIC README_polaris_crosscloud.md — the combined block covers both catalogs), then restart the cluster.
+# MAGIC README_catalog_crosscloud.md — the combined block covers both catalogs), then restart the cluster.
 
 # COMMAND ----------
 
