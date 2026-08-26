@@ -154,7 +154,7 @@ Legend: ✅ pass · ⏳ pending · 🚧 blocked · ➖ not applicable. Tested on
 | DROP table/view | ✅ (needs DROP_WITH_PURGE_ENABLED) | ✅ (purge via LK background task) |
 | Trino R/W (R2) | ✅ | ✅ |
 | Spark R/W (R2) | ⏳ | ⏳ |
-| Databricks CRUD incl v3+VARIANT (R2) | 🚧 firewall 8181 | 🚧 firewall 8282 |
+| Databricks CRUD incl v3+VARIANT (R2) | ✅ (DBR 18, non-UC, own keys) | ⏳ (firewall open; test next) |
 | RBAC (soft) | ⏳ (Polaris grants) | ⏳ (OpenFGA/Cedar) |
 | Storage auth used | own keys (skip-subscoping; no IAM role) | own keys (Trino 483 doesn't consume LK remote signing) |
 | Credential vending (pass 2) | ⏳ needs roleArn | ➖ needs STS role (remote signing not consumed by Trino 483) |
