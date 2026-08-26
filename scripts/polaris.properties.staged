@@ -15,8 +15,10 @@ iceberg.rest-catalog.uri=http://polaris:8181/api/catalog
 iceberg.rest-catalog.warehouse=ctv_poc
 
 # OAuth2 (client credentials). credential = "<client-id>:<client-secret>" of a Polaris principal.
+# Kept out of git: Trino reads it from the POLARIS_OAUTH2_CREDENTIAL env (set in .env, passed via compose),
+# same pattern as postgres.properties / unity_catalog.properties. Value = the trino_poc creds from bootstrap.
 iceberg.rest-catalog.security=OAUTH2
-iceberg.rest-catalog.oauth2.credential=<CLIENT_ID>:<CLIENT_SECRET>
+iceberg.rest-catalog.oauth2.credential=${ENV:POLARIS_OAUTH2_CREDENTIAL}
 iceberg.rest-catalog.oauth2.scope=PRINCIPAL_ROLE:ALL
 # If the token endpoint isn't the default {uri}/v1/oauth/tokens, set it explicitly:
 # iceberg.rest-catalog.oauth2.server-uri=http://<POLARIS_HOST>:8181/api/catalog/v1/oauth/tokens

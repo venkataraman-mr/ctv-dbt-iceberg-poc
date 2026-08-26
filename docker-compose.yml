@@ -58,6 +58,10 @@ services:
       # unity_catalog.properties via ${ENV:UC_AZURE_STORAGE_ACCOUNT_KEY}.
       UC_AZURE_STORAGE_ACCOUNT_NAME: ${UC_AZURE_STORAGE_ACCOUNT_NAME:-}
       UC_AZURE_STORAGE_ACCOUNT_KEY: ${UC_AZURE_STORAGE_ACCOUNT_KEY:-}
+      # Polaris principal creds for the catalog-PoC `polaris.properties` (reads ${ENV:POLARIS_OAUTH2_CREDENTIAL}).
+      # Format "clientId:clientSecret" of the trino_poc principal from scripts/polaris_bootstrap.sh. In .env
+      # (gitignored). Optional: only needed while the polaris catalog is wired.
+      POLARIS_OAUTH2_CREDENTIAL: ${POLARIS_OAUTH2_CREDENTIAL:-}
     depends_on: [nessie]
     restart: unless-stopped
 
@@ -119,12 +123,40 @@ services:
     volumes:
       - catalog_pg_data:/var/lib/postgresql/data # named volume on the VM's (EBS-backed) docker storage
       - ./infra/catalog-poc/init-catalog-dbs.sql:/docker-entrypoint-initdb.d/init-catalog-dbs.sql:ro
+    healthcheck:                                 # gate the bootstrap + Polaris on Postgres being ready
+      test: ["CMD-SHELL", "pg_isready -U catalog -d polaris"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
+  polaris_bootstrap:                             # ONE-SHOT: create Polaris' schema + root principal, then exit.
+    # Polaris 1.7 does NOT self-create its metastore schema on startup — the server just makes the root creds
+    # AVAILABLE (POLARIS_BOOTSTRAP_CREDENTIALS). Without this step the first API call fails with
+    # `relation "polaris_schema.entities" does not exist`. The admin tool is idempotent in 1.7 (re-runs skip),
+    # so it's safe to run on every `up`. Same datasource env as the `polaris` service, pointed at the same DB.
+    image: apache/polaris-admin-tool:${POLARIS_VERSION:-latest}
+    container_name: polaris_bootstrap
+    depends_on:
+      catalog_postgres:
+        condition: service_healthy
+    environment:
+      polaris.persistence.type: relational-jdbc
+      quarkus.datasource.db-kind: postgresql
+      quarkus.datasource.jdbc.url: jdbc:postgresql://catalog_postgres:5432/polaris
+      quarkus.datasource.username: catalog
+      quarkus.datasource.password: ${CATALOG_PG_PASSWORD:-catalogpoc}
+    command: ["bootstrap", "-r", "POLARIS", "-c", "POLARIS,root,${POLARIS_ROOT_SECRET:-s3cr3t}"]
+    restart: "no"                                # run once and exit; not a long-running service
+
   polaris:                                       # Apache Polaris — Iceberg REST catalog
-    image: apache/polaris:${POLARIS_VERSION:-latest}   # <-- VERIFY tag vs the official getting-started
+    image: apache/polaris:${POLARIS_VERSION:-latest}   # server 1.7.0 via `latest`; admin-tool tag tracks this var
     container_name: polaris
-    depends_on: [catalog_postgres]
+    depends_on:
+      catalog_postgres:
+        condition: service_healthy
+      polaris_bootstrap:
+        condition: service_completed_successfully   # start only after the schema + root principal exist
     ports: ["8181:8181"]                         # Iceberg REST + management API
     environment:
       # persistence -> relational JDBC on the `polaris` DB (env NAMES are Polaris-version-specific; verify)

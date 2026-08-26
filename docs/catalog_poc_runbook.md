@@ -33,11 +33,15 @@ requirements. Decision framework + landscape: [`iceberg_catalog_evaluation.md`](
 
 Trino is the **last** step and is just a config file — it is *not* "bootstrapped." The sequence:
 
-1. **`docker compose up -d`** → `catalog_postgres` creates the empty `polaris` + `lakekeeper` DBs; `polaris`
-   starts and connects to the `polaris` DB.
-2. **Polaris self-initializes** *(bootstrap sense #1)* — on first start Polaris creates its **own metastore
-   schema + a root principal** inside the `polaris` DB (from `POLARIS_BOOTSTRAP_CREDENTIALS`, or a one-time
-   `polaris-admin bootstrap` run — version-dependent; the logs tell us which). This is about **Polaris**, not Trino.
+1. **`docker compose up -d`** → `catalog_postgres` comes up (creates the empty `polaris` + `lakekeeper` DBs) and
+   becomes healthy.
+2. **Polaris schema bootstrap** *(bootstrap sense #1 — now automated)* — the one-shot `polaris_bootstrap` service
+   (`apache/polaris-admin-tool`) runs `bootstrap -r POLARIS -c POLARIS,root,<secret>`, which creates Polaris'
+   **metastore schema (`polaris_schema.*`) + the root principal** inside the `polaris` DB, then exits. **Polaris
+   1.7 does NOT self-create this on startup** — `POLARIS_BOOTSTRAP_CREDENTIALS` on the server only makes the root
+   creds *available*; without the admin-tool run the first API call fails with
+   `relation "polaris_schema.entities" does not exist`. The `polaris` server then starts (it `depends_on` the
+   bootstrap completing). Idempotent in 1.7, so it's safe on every `up`. This is about **Polaris**, not Trino.
 3. **Catalog bootstrap** *(bootstrap sense #2 — `scripts/polaris_bootstrap.sh`)* — with the root creds, create a
    **catalog `ctv_poc`** (→ `s3://…/polaris`), a **principal `trino_poc`**, and **roles/grants**. Output: the
    `trino_poc` **client_id:client_secret**. Still entirely inside Polaris.
@@ -52,13 +56,27 @@ wiring needs the principal creds from step 3. The detailed commands for each are
 
 ## Part A — Apache Polaris (first)
 
-1. **Deploy** — the catalog services are in the main compose, so they come up with the stack:
+1. **Deploy** — the catalog services are in the main compose, so they come up with the stack. Order is enforced
+   by `depends_on`: `catalog_postgres` (healthy) → `polaris_bootstrap` (runs once, exits) → `polaris`:
    ```bash
-   docker compose up -d                 # brings the whole stack incl. catalog_postgres + polaris
-   docker logs polaris --tail 50
+   docker compose up -d                 # catalog_postgres -> polaris_bootstrap -> polaris, all with the stack
+   docker logs polaris_bootstrap        # expect "Realm 'POLARIS' successfully bootstrapped."
+   docker logs polaris --tail 50        # expect "started ... Listening on http://0.0.0.0:8181"
+   # verify the realm is live (should return an access_token, not a 500):
+   curl -s -X POST http://localhost:8181/api/catalog/v1/oauth/tokens \
+     -d grant_type=client_credentials -d client_id=root -d client_secret=s3cr3t \
+     -d scope=PRINCIPAL_ROLE:ALL ; echo
    ```
-   ⚠️ The `polaris` service env is **version-specific** — if it doesn't start, reconcile the image tag + env
-   against the official getting-started (polaris.apache.org/guides/trino). Paste the log and I'll adjust.
+   Validated on **Polaris 1.7.0** (server + admin-tool via `latest`, 2026-08-26). If you ever bootstrap manually
+   (e.g. against a different realm), the equivalent one-off is:
+   ```bash
+   NET=$(docker inspect polaris -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}')
+   docker run --rm --network "$NET" \
+     -e polaris.persistence.type=relational-jdbc -e quarkus.datasource.db-kind=postgresql \
+     -e quarkus.datasource.jdbc.url=jdbc:postgresql://catalog_postgres:5432/polaris \
+     -e quarkus.datasource.username=catalog -e quarkus.datasource.password=catalogpoc \
+     apache/polaris-admin-tool:1.7.0 bootstrap -r POLARIS -c POLARIS,root,s3cr3t
+   ```
 2. **Bootstrap** the catalog + a Trino principal + grants:
    ```bash
    bash scripts/polaris_bootstrap.sh        # creates catalog `ctv_poc` -> s3://.../polaris, principal `trino_poc`
