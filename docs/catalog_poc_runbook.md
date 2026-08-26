@@ -154,18 +154,27 @@ Legend: ✅ pass · ⏳ pending · 🚧 blocked · ➖ not applicable. Tested on
 | DROP table/view | ✅ (needs DROP_WITH_PURGE_ENABLED) | ✅ (purge via LK background task) |
 | Trino R/W (R2) | ✅ | ✅ |
 | Spark R/W (R2) | ⏳ | ⏳ |
-| Databricks CRUD incl v3+VARIANT (R2) | ✅ (DBR 18, non-UC, own keys) | ⏳ (firewall open; test next) |
+| Databricks CRUD incl v3+VARIANT (R2) | ✅ (DBR 18, non-UC, own keys) | ✅ (DBR 18, non-UC, own keys) |
+| Cross-engine (Trino <-> Databricks) | ✅ | ✅ |
 | RBAC (soft) | ⏳ (Polaris grants) | ⏳ (OpenFGA/Cedar) |
 | Storage auth used | own keys (skip-subscoping; no IAM role) | own keys (Trino 483 doesn't consume LK remote signing) |
 | Credential vending (pass 2) | ⏳ needs roleArn | ➖ needs STS role (remote signing not consumed by Trino 483) |
 | Deploy on VM | ✅ running | ✅ running |
 
-**Read so far:** both OSS catalogs fully pass the Trino-side suite — v3 CREATE, VARIANT create/insert/read,
-row-level DML, views, DROP, and external-Trino-R/W — the hard requirements Nessie failed. Neither did credential
-vending in this PoC (no IAM role) — both fell back to Trino's own S3 keys. Only real behavioural differences so
-far: Polaris needs `DROP_WITH_PURGE_ENABLED` for file cleanup on drop, while Lakekeeper purges via a background
-task; Lakekeeper's native S3 remote signing isn't consumed by Trino 483 (own-keys instead). The decisive
-Databricks-CRUD test (incl. v3+VARIANT) is pending the 8181/8282 firewall opening — that's the tiebreaker.
+**Result:** both OSS catalogs pass **every hard requirement** — v3 CREATE, VARIANT create/insert/read, row-level
+DML, views, DROP, external-Trino-R/W, **and Databricks cross-cloud CRUD incl. v3+VARIANT** (DBR 18 LTS, non-UC
+cluster, own S3 keys), plus cross-engine round-trip (a table one engine writes, the other reads). This is exactly
+the set Nessie failed. Neither did credential vending in this PoC (no IAM role) — both used Trino/Spark own keys.
+
+Behavioural differences to weigh for the decision (none block a hard req):
+- **Drop cleanup:** Polaris needs `DROP_WITH_PURGE_ENABLED`; Lakekeeper purges via a background task.
+- **S3 auth:** Polaris skip-subscoping; Lakekeeper's native remote signing isn't consumed by Trino 483 (own-keys).
+- **Cross-cloud networking:** Polaris advertises relative paths, so internal Trino and external Databricks each
+  keep their own URL with zero extra config. Lakekeeper advertises a single `BASE_URI` in `/config`, which the
+  *fresh* Databricks client follows — so `BASE_URI` must be the public URL. Trino does NOT follow it (keeps its
+  configured internal URI), so both still work simultaneously; but it's an extra config subtlety Polaris avoids.
+- **Table paths:** Databricks writes clean locations; Trino appends a UUID suffix (`iceberg.unique-table-location`,
+  default on) — cosmetic, per-connector, documented in the catalog `.properties`.
 
 **Decision** (per `iceberg_catalog_evaluation.md` §7d): a catalog passing v3 CREATE + VARIANT + Trino/Spark R/W
 (+ Databricks read or fallback) → adopt it. Neither → escalate for the paid AWS S3 Tables fallback.

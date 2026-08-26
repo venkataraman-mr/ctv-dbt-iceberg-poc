@@ -62,9 +62,10 @@ services:
       # Format "clientId:clientSecret" of the trino_poc principal from scripts/polaris_bootstrap.sh. In .env
       # (gitignored). Optional: only needed while the polaris catalog is wired.
       POLARIS_OAUTH2_CREDENTIAL: ${POLARIS_OAUTH2_CREDENTIAL:-}
-      # Lakekeeper Iceberg REST URI for lakekeeper.properties (reads ${ENV:LAKEKEEPER_URI}). MUST match
-      # LAKEKEEPER__BASE_URI's host: internal http://lakekeeper:8181/catalog by default, or the VM public URL
-      # http://<VM_PUBLIC_IP>:8282/catalog for the cross-cloud test (set LAKEKEEPER_URI in .env to match).
+      # Lakekeeper Iceberg REST URI for lakekeeper.properties (reads ${ENV:LAKEKEEPER_URI}). KEEP THIS INTERNAL
+      # (default). Trino talks to Lakekeeper over the Docker network and ignores the public BASE_URI Lakekeeper
+      # advertises. Do NOT set this to the public IP — the VM can't reach its own public 8282 (SG allows only
+      # Databricks), so Trino would hang. Internal here + BASE_URI public above = Trino and Databricks both work.
       LAKEKEEPER_URI: ${LAKEKEEPER_URI:-http://lakekeeper:8181/catalog}
     depends_on: [nessie]
     restart: unless-stopped
@@ -213,12 +214,12 @@ services:
       LAKEKEEPER__PG_DATABASE_URL_READ:  postgres://catalog:${CATALOG_PG_PASSWORD:-catalogpoc}@catalog_postgres:5432/lakekeeper
       LAKEKEEPER__PG_DATABASE_URL_WRITE: postgres://catalog:${CATALOG_PG_PASSWORD:-catalogpoc}@catalog_postgres:5432/lakekeeper
       LAKEKEEPER__PG_ENCRYPTION_KEY: ${LAKEKEEPER_ENCRYPTION_KEY:-lakekeeper-poc-encryption-key}
-      # Lakekeeper advertises this as its CANONICAL endpoint in GET /config; every client (Trino AND external
-      # Databricks) then uses it. So it must be reachable by BOTH. Default is the internal Docker name (Trino
-      # only). For the cross-cloud test set LAKEKEEPER_BASE_URI in .env to the VM's PUBLIC url
-      # (http://<VM_PUBLIC_IP>:8282) — Trino then reaches it by hairpinning to the instance's public IP (the same
-      # 8282 SG rule covers it), and Databricks reaches it directly. (Polaris didn't need this — it uses relative
-      # paths, so each client keeps its own connect URL.)
+      # Lakekeeper advertises this in GET /config. External Databricks (fresh connect) FOLLOWS it, so for
+      # cross-cloud set LAKEKEEPER_BASE_URI in .env to the VM PUBLIC url (http://<VM_PUBLIC_IP>:8282). Trino does
+      # NOT follow it — Trino keeps talking to its own configured LAKEKEEPER_URI (internal, below). So the stable
+      # setup is: BASE_URI=public (for Databricks) + LAKEKEEPER_URI unset/internal (for Trino) -> BOTH work at
+      # once, no toggling. Do NOT also point LAKEKEEPER_URI at the public IP: the VM can't reach its own public
+      # 8282 (SG allows only Databricks' source), so Trino would hang.
       LAKEKEEPER__BASE_URI: ${LAKEKEEPER_BASE_URI:-http://lakekeeper:8181}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
