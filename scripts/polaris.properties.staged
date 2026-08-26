@@ -28,6 +28,12 @@ iceberg.rest-catalog.oauth2.scope=PRINCIPAL_ROLE:ALL
 fs.native-s3.enabled=true
 s3.region=us-east-2
 
+# Table S3 directory naming: Trino defaults iceberg.unique-table-location=true, which appends a random UUID
+# suffix to each new table's S3 path (.../mytable-<uuid>). Safety measure — a recreated table never reuses a
+# dropped table's prefix. Databricks-created tables use the clean location (.../mytable). Uncomment to make
+# Trino write clean paths too (then restart Trino). Left OFF (default true) for now — suffix is safer.
+#   iceberg.unique-table-location=false
+
 # STORAGE (pass 2 — credential vending): to test Polaris vending instead, comment the two lines above and
 # uncomment the next line (Polaris then vends short-lived scoped S3 creds; Trino needs no keys):
 # iceberg.rest-catalog.vended-credentials-enabled=true
