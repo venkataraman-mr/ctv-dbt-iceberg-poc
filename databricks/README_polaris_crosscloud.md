@@ -29,11 +29,14 @@ catalog is exactly what this test answers; it is bleeding-edge, so treat the res
   stale/`unspecified` Iceberg or VARIANT fails, attach these Maven coordinates and re-run:
   * `org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.11.0` (match the Scala/Spark of your DBR)
   * `org.apache.iceberg:iceberg-aws-bundle:1.11.0`
-* **Catalog config timing:** the notebook sets `spark.sql.catalog.*` at runtime via `spark.conf.set`. If Spark
-  rejects a runtime set, move these into **Cluster → Advanced → Spark config** and restart:
+* **Catalog config MUST be in the cluster Spark config — not the notebook.** `spark.sql.extensions` is a
+  **static** config; setting it at runtime fails with `CANNOT_MODIFY_STATIC_CONFIG`. So register the catalogs in
+  **Cluster → Edit → Advanced options → Spark → Spark config** and **restart the cluster**. One block covers
+  both catalogs (fill in the VM host, `trino_poc` creds, AWS keys):
 
   ```
   spark.sql.extensions org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
+
   spark.sql.catalog.polaris org.apache.iceberg.spark.SparkCatalog
   spark.sql.catalog.polaris.type rest
   spark.sql.catalog.polaris.uri http://<AWS_VM_HOST>:8181/api/catalog
@@ -41,10 +44,25 @@ catalog is exactly what this test answers; it is bleeding-edge, so treat the res
   spark.sql.catalog.polaris.credential <clientId>:<clientSecret>
   spark.sql.catalog.polaris.scope PRINCIPAL_ROLE:ALL
   spark.sql.catalog.polaris.io-impl org.apache.iceberg.aws.s3.S3FileIO
+  spark.sql.catalog.polaris.client.region us-east-2
   spark.sql.catalog.polaris.s3.region us-east-2
   spark.sql.catalog.polaris.s3.access-key-id <AWS_ACCESS_KEY_ID>
   spark.sql.catalog.polaris.s3.secret-access-key <AWS_SECRET_ACCESS_KEY>
+
+  spark.sql.catalog.lakekeeper org.apache.iceberg.spark.SparkCatalog
+  spark.sql.catalog.lakekeeper.type rest
+  spark.sql.catalog.lakekeeper.uri http://<AWS_VM_HOST>:8282/catalog
+  spark.sql.catalog.lakekeeper.warehouse ctv_lakekeeper
+  spark.sql.catalog.lakekeeper.token dummy
+  spark.sql.catalog.lakekeeper.io-impl org.apache.iceberg.aws.s3.S3FileIO
+  spark.sql.catalog.lakekeeper.client.region us-east-2
+  spark.sql.catalog.lakekeeper.s3.region us-east-2
+  spark.sql.catalog.lakekeeper.s3.access-key-id <AWS_ACCESS_KEY_ID>
+  spark.sql.catalog.lakekeeper.s3.secret-access-key <AWS_SECRET_ACCESS_KEY>
   ```
+  `client.region` is required — Iceberg's AWS client factory reads the region from `client.region`, not
+  `s3.region`; without it the executor's S3 write fails with "Unable to load region from any of the providers".
+  The notebook's cell 2 then only *verifies* the catalog is visible; it does not set these.
 
 ## Why own S3 keys (not vending)
 
