@@ -171,6 +171,11 @@ services:
       # Without this, table create fails in sts:AssumeRole -> "Failed to create transaction". Production path
       # is the opposite: give the catalog a roleArn and turn ON real credential vending (pass 2).
       'polaris.features."SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION"': "true"
+      # Allow DROP TABLE/VIEW to purge S3 files. Trino's DROP sends purgeRequested=true; Polaris blocks purge
+      # by DEFAULT (a guardrail against accidental data loss) -> 403 "Unable to purge entity". Enabling it gives
+      # clean PoC teardown. NOTE: in production you may deliberately leave this OFF — then a DROP only removes
+      # the catalog pointer and the S3 data survives for recovery.
+      'polaris.features."DROP_WITH_PURGE_ENABLED"': "true"
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_REGION: ${AWS_REGION}
