@@ -181,5 +181,43 @@ services:
       AWS_REGION: ${AWS_REGION}
     restart: unless-stopped
 
+  lakekeeper_migrate:                            # ONE-SHOT: create/upgrade Lakekeeper's Postgres schema, then exit.
+    # Lakekeeper needs `migrate` run against its DB before `serve` will start (analogous to Polaris' admin-tool
+    # bootstrap). Idempotent — safe on every `up`. Uses the `lakekeeper` DB in the shared catalog_postgres.
+    image: quay.io/lakekeeper/catalog:${LAKEKEEPER_VERSION:-latest}   # <-- VERIFY tag vs docs.lakekeeper.io
+    container_name: lakekeeper_migrate
+    depends_on:
+      catalog_postgres:
+        condition: service_healthy
+    environment:
+      LAKEKEEPER__PG_DATABASE_URL_READ:  postgres://catalog:${CATALOG_PG_PASSWORD:-catalogpoc}@catalog_postgres:5432/lakekeeper
+      LAKEKEEPER__PG_DATABASE_URL_WRITE: postgres://catalog:${CATALOG_PG_PASSWORD:-catalogpoc}@catalog_postgres:5432/lakekeeper
+      LAKEKEEPER__PG_ENCRYPTION_KEY: ${LAKEKEEPER_ENCRYPTION_KEY:-lakekeeper-poc-encryption-key}
+    command: ["migrate"]
+    restart: "no"
+
+  lakekeeper:                                    # Lakekeeper — Iceberg REST catalog (Rust)
+    image: quay.io/lakekeeper/catalog:${LAKEKEEPER_VERSION:-latest}
+    container_name: lakekeeper
+    depends_on:
+      catalog_postgres:
+        condition: service_healthy
+      lakekeeper_migrate:
+        condition: service_completed_successfully
+    ports: ["8282:8181"]                         # host 8282 -> container 8181 (Polaris already owns host 8181)
+    environment:
+      LAKEKEEPER__PG_DATABASE_URL_READ:  postgres://catalog:${CATALOG_PG_PASSWORD:-catalogpoc}@catalog_postgres:5432/lakekeeper
+      LAKEKEEPER__PG_DATABASE_URL_WRITE: postgres://catalog:${CATALOG_PG_PASSWORD:-catalogpoc}@catalog_postgres:5432/lakekeeper
+      LAKEKEEPER__PG_ENCRYPTION_KEY: ${LAKEKEEPER_ENCRYPTION_KEY:-lakekeeper-poc-encryption-key}
+      # Externally-reachable base URL. Trino reaches Lakekeeper internally at http://lakekeeper:8181; set this so
+      # returned links / S3 remote-signing URLs resolve for in-network clients. NOTE: external Databricks reaches
+      # it at http://<VM>:8282 — revisit BASE_URI (or disable remote signing) when we do the cross-cloud step.
+      LAKEKEEPER__BASE_URI: http://lakekeeper:8181
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+    command: ["serve"]
+    restart: unless-stopped
+
 volumes:
   catalog_pg_data:

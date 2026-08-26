@@ -20,12 +20,14 @@ requirements. Decision framework + landscape: [`iceberg_catalog_evaluation.md`](
 ## Files
 | File | Purpose |
 | :-- | :-- |
-| `docker-compose.yml` (main) | `catalog_postgres` + `polaris` services (start with the stack) |
+| `docker-compose.yml` (main) | `catalog_postgres`, `polaris` (+ `polaris_bootstrap`), `lakekeeper` (+ `lakekeeper_migrate`) services |
 | `infra/catalog-poc/init-catalog-dbs.sql` | Creates the `lakekeeper` DB (Postgres init) |
 | `scripts/polaris_bootstrap.sh` | Creates the Polaris catalog + principal + RBAC grants |
-| `scripts/polaris.properties.staged` | Trino → Polaris catalog config (fill creds, then copy live) |
-| `scripts/lakekeeper.properties.staged` | Trino → Lakekeeper (for Part B) |
-| `scripts/catalog_feature_tests.sql` | v3+VARIANT + DML + views tests (run per catalog) |
+| `scripts/polaris.properties.staged` | Trino → Polaris catalog config (creds via `${ENV:POLARIS_OAUTH2_CREDENTIAL}`) |
+| `scripts/lakekeeper_bootstrap.sh` | Bootstraps Lakekeeper + creates the `ctv_lakekeeper` S3 warehouse |
+| `scripts/lakekeeper.properties.staged` | Trino → Lakekeeper catalog config |
+| `scripts/catalog_feature_tests.sql` | v3+VARIANT + DML + views tests (`<CATALOG>`/`<SCHEMA>` template) |
+| `scripts/catalog_feature_tests_polaris.sql` / `_lakekeeper.sql` | Pre-filled per-catalog test scripts (DBeaver) |
 
 ---
 
@@ -96,10 +98,41 @@ wiring needs the principal creds from step 3. The detailed commands for each are
 6. **Credential vending (pass 2):** flip `polaris.properties` to the vended-creds block (commented in the file),
    restart Trino, re-run the tests with no S3 keys.
 
-## Part B — Lakekeeper (after Polaris passes/decides)
-To be wired next: add a `lakekeeper` service to the main `docker-compose.yml` (uses the `lakekeeper` DB +
-`.../lakekeeper/` S3 prefix), bootstrap a warehouse (UI/endpoint), then `cp scripts/lakekeeper.properties.staged
-infra/trino/catalog/lakekeeper.properties` and restart Trino. Same feature tests with `<CATALOG>` = `lakekeeper`.
+## Part B — Lakekeeper
+
+Same "one Trino, many catalogs" model. Lakekeeper reuses `catalog_postgres` (the `lakekeeper` DB) and the shared
+bucket (`.../lakekeeper/` prefix). It listens on 8181 internally like Polaris, so it's published on **host 8282**
+(`8282:8181`) — Polaris keeps host 8181. Endpoints: `/catalog` (Iceberg REST), `/management`, `/ui`.
+
+Lifecycle mirrors Polaris but with Lakekeeper's own tooling: **migrate (schema) → serve → bootstrap (admin +
+project) → create warehouse (S3 storage) → wire Trino → test**. This PoC runs Lakekeeper **unsecured** (no
+OpenID); clients send a throwaway bearer token. Storage uses an **access-key credential with STS off** (no IAM
+role) — Lakekeeper then does S3 **remote signing** (the Polaris skip-subscoping analog).
+
+1. **Deploy** — services are in the main compose; order is enforced `catalog_postgres` (healthy) →
+   `lakekeeper_migrate` (runs once, exits) → `lakekeeper`:
+   ```bash
+   docker compose up -d
+   docker logs lakekeeper_migrate      # expect a successful migration, then exit 0
+   docker logs lakekeeper --tail 40    # expect it serving on :8181 (published to host 8282)
+   curl -s http://localhost:8282/health ; echo    # or the server-info endpoint
+   ```
+   ⚠️ Image tag + `LAKEKEEPER__*` env are **version-specific** — if it doesn't start, reconcile against
+   docs.lakekeeper.io and paste `docker logs lakekeeper`.
+2. **Bootstrap + warehouse:**
+   ```bash
+   bash scripts/lakekeeper_bootstrap.sh    # bootstraps the server + creates warehouse `ctv_lakekeeper`
+   ```
+3. **Wire Trino:**
+   ```bash
+   cp scripts/lakekeeper.properties.staged infra/trino/catalog/lakekeeper.properties
+   docker compose up -d trino
+   docker exec -i trino trino --execute "SHOW CATALOGS"     # expect `lakekeeper`
+   ```
+4. **Feature tests:** run `scripts/catalog_feature_tests_lakekeeper.sql` (or the `<CATALOG>` template with
+   `lakekeeper` / `ctv_catalog_poc`) top-to-bottom in DBeaver. Record pass/fail per block in the matrix.
+5. **RBAC + cross-cloud** as for Polaris (Lakekeeper uses OpenFGA/Cedar authz — soft req; the Databricks
+   cross-cloud test is on hold pending the 8181/8282 firewall opening).
 
 ## Part C — Cross-engine (Spark + Databricks)
 - **Spark** (EMR/K8s or local Spark 4.x + iceberg 1.11): `spark.sql.catalog.X.type=rest` at the catalog uri +

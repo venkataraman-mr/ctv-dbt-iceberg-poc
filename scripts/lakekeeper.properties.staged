@@ -1,31 +1,28 @@
 # Trino catalog: connect Trino -> Lakekeeper (Iceberg REST) for the catalog PoC.
-# Drop into the Trino catalog dir as `lakekeeper.properties`, then `docker compose restart trino`.
-# Values in <...> come from your Lakekeeper bootstrap (see poc/catalog/README.md).
-#
-# Lakekeeper is a Rust Iceberg REST catalog and VENDS S3 credentials, so Trino needs no S3 keys
-# (this also tests credential vending). Auth can be off for a first PoC, or OIDC/OAuth2 if enabled.
+# Drop into infra/trino/catalog/ as `lakekeeper.properties`, then `docker compose up -d trino`.
+# Wire this only AFTER scripts/lakekeeper_bootstrap.sh has created the `ctv_lakekeeper` warehouse.
 
 connector.name=iceberg
 iceberg.catalog.type=rest
 
-# Lakekeeper Iceberg REST endpoint. The catalog API path is /catalog; :8181 by default.
-iceberg.rest-catalog.uri=http://<LAKEKEEPER_HOST>:8181/catalog
+# Lakekeeper Iceberg REST endpoint. Internal Docker hostname `lakekeeper`, container port 8181, /catalog path.
+# (External Databricks uses http://<VM>:8282/catalog — different host port, same /catalog path.)
+iceberg.rest-catalog.uri=http://lakekeeper:8181/catalog
 
-# The warehouse name you created in Lakekeeper (UI: Add Warehouse -> S3), i.e. the REST "warehouse".
-iceberg.rest-catalog.warehouse=<LAKEKEEPER_WAREHOUSE_NAME>
+# The Lakekeeper warehouse name created at bootstrap (the REST "warehouse").
+iceberg.rest-catalog.warehouse=ctv_lakekeeper
 
-# STORAGE (pass 1 — own keys): Trino reaches S3 with its OWN AWS creds (same as the Nessie `iceberg` catalog).
+# Unsecured Lakekeeper (no OpenID in this PoC): send a static bearer token; any value is accepted.
+# If we later enable OpenID auth, switch to oauth2.credential + a token endpoint like the Polaris catalog.
+iceberg.rest-catalog.security=OAUTH2
+iceberg.rest-catalog.oauth2.token=dummy
+
+# STORAGE: Lakekeeper controls S3 access via the warehouse's storage-credential (access-key, STS off -> remote
+# signing). Let Trino take the catalog-managed credentials rather than using its own keys.
+iceberg.rest-catalog.vended-credentials-enabled=true
 fs.native-s3.enabled=true
 s3.region=us-east-2
 
-# STORAGE (pass 2 — credential vending): Lakekeeper is built around vending, so it may be the natural path
-# here (its warehouse holds the S3 creds). To test vending, comment the two lines above and uncomment:
-# iceberg.rest-catalog.vended-credentials-enabled=true
-#
-# If Lakekeeper points at MinIO instead of real S3: s3.endpoint=http://<MINIO_HOST>:9000 + s3.path-style-access=true
-
-# --- Auth (only if Lakekeeper auth is enabled; PoC can start with auth disabled) ---
-# iceberg.rest-catalog.security=OAUTH2
-# iceberg.rest-catalog.oauth2.credential=<CLIENT_ID>:<CLIENT_SECRET>
-# iceberg.rest-catalog.oauth2.server-uri=http://<KEYCLOAK_HOST>/realms/<realm>/protocol/openid-connect/token
-# iceberg.rest-catalog.oauth2.scope=lakekeeper
+# Fallback if Lakekeeper remote-signing isn't honored by this Trino build: comment vended-credentials above and
+# provide Trino's own keys (AWS_* env already in the container), same as the Nessie `iceberg` catalog:
+#   (remove the vended-credentials line; fs.native-s3 + s3.region already present)
