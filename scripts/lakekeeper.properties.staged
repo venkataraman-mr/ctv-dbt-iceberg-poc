@@ -17,12 +17,12 @@ iceberg.rest-catalog.warehouse=ctv_lakekeeper
 iceberg.rest-catalog.security=OAUTH2
 iceberg.rest-catalog.oauth2.token=dummy
 
-# STORAGE: Lakekeeper controls S3 access via the warehouse's storage-credential (access-key, STS off -> remote
-# signing). Let Trino take the catalog-managed credentials rather than using its own keys.
-iceberg.rest-catalog.vended-credentials-enabled=true
+# STORAGE (own keys): Lakekeeper with access-key + STS off uses S3 *remote signing*, which Trino 483 does not
+# consume (it looks for vended keys and fails with "accessKey is null"). So Trino reaches S3 with its OWN creds
+# (AWS_* env already in the container, default provider chain), same as the Nessie `iceberg` and Polaris catalogs.
+# Lakekeeper still owns the metadata pointer; only the raw S3 IO is done by Trino directly.
 fs.native-s3.enabled=true
 s3.region=us-east-2
 
-# Fallback if Lakekeeper remote-signing isn't honored by this Trino build: comment vended-credentials above and
-# provide Trino's own keys (AWS_* env already in the container), same as the Nessie `iceberg` catalog:
-#   (remove the vended-credentials line; fs.native-s3 + s3.region already present)
+# To instead test Lakekeeper credential vending, you'd need STS (a warehouse sts-role-arn / IAM role) and then:
+# iceberg.rest-catalog.vended-credentials-enabled=true   (not viable in this PoC — no role)
