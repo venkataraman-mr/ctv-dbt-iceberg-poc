@@ -39,25 +39,14 @@ SCHEMA  = "ctv_catalog_poc"
 
 # COMMAND ----------
 
-# MAGIC %md ## 2. Register Lakekeeper as a Spark Iceberg REST catalog
+# MAGIC %md ## 2. Catalog registration — done in CLUSTER Spark config, NOT here
+# MAGIC `spark.sql.extensions` is a **static** Spark config and cannot be set at runtime on Databricks
+# MAGIC (`CANNOT_MODIFY_STATIC_CONFIG`). Register the `lakekeeper` catalog in the **cluster Spark config** (see
+# MAGIC README_polaris_crosscloud.md — the combined block covers both catalogs), then restart the cluster.
 
 # COMMAND ----------
 
-spark.conf.set("spark.sql.extensions",
-               "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
-
-p = f"spark.sql.catalog.{CATALOG}"
-spark.conf.set(p, "org.apache.iceberg.spark.SparkCatalog")
-spark.conf.set(f"{p}.type", "rest")
-spark.conf.set(f"{p}.uri", LK_URI)
-spark.conf.set(f"{p}.warehouse", WAREHOUSE)
-spark.conf.set(f"{p}.token", LK_TOKEN)                 # static bearer (unsecured)
-# S3 FileIO with OWN keys (parity with the working Trino path).
-spark.conf.set(f"{p}.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
-spark.conf.set(f"{p}.s3.region", AWS_REGION)
-spark.conf.set(f"{p}.s3.access-key-id", AWS_ACCESS_KEY)
-spark.conf.set(f"{p}.s3.secret-access-key", AWS_SECRET_KEY)
-print("catalog configured:", CATALOG)
+print("lakekeeper catalog class:", spark.conf.get(f"spark.sql.catalog.{CATALOG}", "NOT SET — configure the cluster and restart"))
 
 # COMMAND ----------
 

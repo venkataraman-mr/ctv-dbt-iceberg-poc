@@ -64,28 +64,17 @@ SCHEMA  = "ctv_catalog_poc"             # namespace to test in
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 2. Register Polaris as a Spark Iceberg REST catalog
-# MAGIC Sets the catalog configs at runtime. If Spark complains that a catalog property can't be set at runtime,
-# MAGIC move these into the **cluster Spark config** (see README) and restart the cluster.
+# MAGIC ## 2. Catalog registration — done in CLUSTER Spark config, NOT here
+# MAGIC `spark.sql.extensions` is a **static** Spark config and cannot be set at runtime on Databricks
+# MAGIC (`CANNOT_MODIFY_STATIC_CONFIG`). So the `polaris` catalog is registered in
+# MAGIC **Cluster → Edit → Advanced options → Spark → Spark config** (see README_polaris_crosscloud.md), then the
+# MAGIC cluster is restarted. This cell only verifies the catalog is visible.
 
 # COMMAND ----------
 
-spark.conf.set("spark.sql.extensions",
-               "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
-
-p = f"spark.sql.catalog.{CATALOG}"
-spark.conf.set(p, "org.apache.iceberg.spark.SparkCatalog")
-spark.conf.set(f"{p}.type", "rest")
-spark.conf.set(f"{p}.uri", POLARIS_URI)
-spark.conf.set(f"{p}.warehouse", WAREHOUSE)
-spark.conf.set(f"{p}.credential", POLARIS_CRED)
-spark.conf.set(f"{p}.scope", OAUTH_SCOPE)
-# S3 FileIO with OWN keys (Polaris is not vending in this PoC). Do NOT request access delegation.
-spark.conf.set(f"{p}.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
-spark.conf.set(f"{p}.s3.region", AWS_REGION)
-spark.conf.set(f"{p}.s3.access-key-id", AWS_ACCESS_KEY)
-spark.conf.set(f"{p}.s3.secret-access-key", AWS_SECRET_KEY)
-print("catalog configured:", CATALOG)
+# Confirms the cluster Spark config was applied. If this prints NOT SET, add the config block from the README to
+# the cluster Spark config and restart the cluster.
+print("polaris catalog class:", spark.conf.get(f"spark.sql.catalog.{CATALOG}", "NOT SET — configure the cluster and restart"))
 
 # COMMAND ----------
 
