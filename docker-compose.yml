@@ -166,6 +166,11 @@ services:
       quarkus.datasource.username: catalog
       quarkus.datasource.password: ${CATALOG_PG_PASSWORD:-catalogpoc}
       POLARIS_BOOTSTRAP_CREDENTIALS: POLARIS,root,${POLARIS_ROOT_SECRET:-s3cr3t}
+      # PoC storage auth: we have NO IAM role for Polaris to assume, so skip STS credential sub-scoping and let
+      # Polaris use its own ambient AWS_* creds for FileIO (matches the pass-1 "own keys, no vending" design).
+      # Without this, table create fails in sts:AssumeRole -> "Failed to create transaction". Production path
+      # is the opposite: give the catalog a roleArn and turn ON real credential vending (pass 2).
+      'polaris.features."SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION"': "true"
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_REGION: ${AWS_REGION}
