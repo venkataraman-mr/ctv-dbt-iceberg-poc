@@ -5,9 +5,11 @@
 connector.name=iceberg
 iceberg.catalog.type=rest
 
-# Lakekeeper Iceberg REST endpoint. Internal Docker hostname `lakekeeper`, container port 8181, /catalog path.
-# (External Databricks uses http://<VM>:8282/catalog — different host port, same /catalog path.)
-iceberg.rest-catalog.uri=http://lakekeeper:8181/catalog
+# Lakekeeper Iceberg REST endpoint. Read from ${ENV:LAKEKEEPER_URI} (set in docker-compose trino env, overridable
+# via .env). This MUST match the host in LAKEKEEPER__BASE_URI, because Lakekeeper advertises BASE_URI in
+# GET /config and the client follows it. Default internal http://lakekeeper:8181/catalog; for the cross-cloud
+# test set both LAKEKEEPER_URI and LAKEKEEPER_BASE_URI to the VM public URL so Trino + Databricks use one address.
+iceberg.rest-catalog.uri=${ENV:LAKEKEEPER_URI}
 
 # The Lakekeeper warehouse name created at bootstrap (the REST "warehouse").
 iceberg.rest-catalog.warehouse=ctv_lakekeeper

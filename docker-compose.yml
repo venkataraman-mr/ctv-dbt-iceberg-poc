@@ -62,6 +62,10 @@ services:
       # Format "clientId:clientSecret" of the trino_poc principal from scripts/polaris_bootstrap.sh. In .env
       # (gitignored). Optional: only needed while the polaris catalog is wired.
       POLARIS_OAUTH2_CREDENTIAL: ${POLARIS_OAUTH2_CREDENTIAL:-}
+      # Lakekeeper Iceberg REST URI for lakekeeper.properties (reads ${ENV:LAKEKEEPER_URI}). MUST match
+      # LAKEKEEPER__BASE_URI's host: internal http://lakekeeper:8181/catalog by default, or the VM public URL
+      # http://<VM_PUBLIC_IP>:8282/catalog for the cross-cloud test (set LAKEKEEPER_URI in .env to match).
+      LAKEKEEPER_URI: ${LAKEKEEPER_URI:-http://lakekeeper:8181/catalog}
     depends_on: [nessie]
     restart: unless-stopped
 
