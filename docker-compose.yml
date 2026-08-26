@@ -101,3 +101,43 @@ services:
     depends_on: [nessie]
     command: tail -f /dev/null
     restart: unless-stopped
+
+  # ===== Iceberg catalogs under evaluation — start with the stack =====
+  # Candidates that may REPLACE Nessie for the whole pipeline if they meet the v3+VARIANT hard reqs, so they
+  # live in the main compose (not a throwaway overlay). Trino reaches them by service name; there is deliberately
+  # NO `depends_on` from trino -> these (Iceberg catalogs load lazily, and the pipeline must not hinge on a
+  # candidate catalog being up). Metadata store = one Postgres, a DB per catalog. See docs/catalog_poc_runbook.md.
+  # (Lakekeeper is added here in Part B once its config is finalized.)
+
+  catalog_postgres:                              # metadata (pointer) store for Polaris + Lakekeeper
+    image: postgres:16
+    container_name: catalog_postgres
+    environment:
+      POSTGRES_USER: catalog
+      POSTGRES_PASSWORD: ${CATALOG_PG_PASSWORD:-catalogpoc}
+      POSTGRES_DB: polaris                       # `lakekeeper` DB created by the init script
+    volumes:
+      - catalog_pg_data:/var/lib/postgresql/data # named volume on the VM's (EBS-backed) docker storage
+      - ./infra/catalog-poc/init-catalog-dbs.sql:/docker-entrypoint-initdb.d/init-catalog-dbs.sql:ro
+    restart: unless-stopped
+
+  polaris:                                       # Apache Polaris — Iceberg REST catalog
+    image: apache/polaris:${POLARIS_VERSION:-latest}   # <-- VERIFY tag vs the official getting-started
+    container_name: polaris
+    depends_on: [catalog_postgres]
+    ports: ["8181:8181"]                         # Iceberg REST + management API
+    environment:
+      # persistence -> relational JDBC on the `polaris` DB (env NAMES are Polaris-version-specific; verify)
+      polaris.persistence.type: relational-jdbc
+      quarkus.datasource.db-kind: postgresql
+      quarkus.datasource.jdbc.url: jdbc:postgresql://catalog_postgres:5432/polaris
+      quarkus.datasource.username: catalog
+      quarkus.datasource.password: ${CATALOG_PG_PASSWORD:-catalogpoc}
+      POLARIS_BOOTSTRAP_CREDENTIALS: POLARIS,root,${POLARIS_ROOT_SECRET:-s3cr3t}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+    restart: unless-stopped
+
+volumes:
+  catalog_pg_data:
