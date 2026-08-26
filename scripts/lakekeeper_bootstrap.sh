@@ -11,9 +11,10 @@ set -euo pipefail
 
 LK=${LK:-http://localhost:8282}                 # host-published Lakekeeper (8282 -> container 8181)
 TOKEN=${TOKEN:-dummy}                            # unsecured: any bearer works
-WAREHOUSE=${WAREHOUSE:-ctv_lakekeeper}
-BUCKET=${BUCKET:-dataplatformpoc-venketa}
-PREFIX=${PREFIX:-lakekeeper}
+# NOTE: LK_-prefixed names so they don't collide with vars in .env (e.g. WAREHOUSE, S3_BUCKET) if it's sourced.
+LK_WAREHOUSE=${LK_WAREHOUSE:-ctv_lakekeeper}
+LK_BUCKET=${LK_BUCKET:-dataplatformpoc-venketa}
+LK_PREFIX=${LK_PREFIX:-lakekeeper}
 REGION=${AWS_REGION:-us-east-2}
 : "${AWS_ACCESS_KEY_ID:?set AWS_ACCESS_KEY_ID}"
 : "${AWS_SECRET_ACCESS_KEY:?set AWS_SECRET_ACCESS_KEY}"
@@ -22,17 +23,17 @@ echo "1) bootstrap the server (initial admin + first project)"
 curl -s -X POST "$LK/management/v1/bootstrap" -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d '{"accept-terms-of-use": true}' ; echo
 
-echo "2) create S3 warehouse $WAREHOUSE -> s3://$BUCKET/$PREFIX"
+echo "2) create S3 warehouse $LK_WAREHOUSE -> s3://$LK_BUCKET/$LK_PREFIX"
 # sts-enabled=false: no IAM role to assume (PoC). With access-key creds + STS off, Lakekeeper uses S3 remote
 # signing (the client asks Lakekeeper to sign each S3 request) rather than vending temporary creds. That works
 # for in-network Trino; the external-Databricks path needs BASE_URI reachable (revisit at the cross-cloud step).
 curl -s -X POST "$LK/management/v1/warehouse" -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d '{
-  "warehouse-name": "'"$WAREHOUSE"'",
+  "warehouse-name": "'"$LK_WAREHOUSE"'",
   "storage-profile": {
     "type": "s3",
-    "bucket": "'"$BUCKET"'",
-    "key-prefix": "'"$PREFIX"'",
+    "bucket": "'"$LK_BUCKET"'",
+    "key-prefix": "'"$LK_PREFIX"'",
     "region": "'"$REGION"'",
     "sts-enabled": false,
     "flavor": "aws"
