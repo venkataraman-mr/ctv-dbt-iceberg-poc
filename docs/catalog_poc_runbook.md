@@ -142,19 +142,27 @@ role) — Lakekeeper then does S3 **remote signing** (the Polaris skip-subscopin
 
 ---
 
-## Results matrix (fill in)
+## Results matrix
+Legend: ✅ pass · ⏳ pending · 🚧 blocked · ➖ not applicable. Tested on Polaris 1.7.0, Lakekeeper 0.13.3, Trino 483 (2026-08-26).
+
 | Feature (→ req) | Polaris | Lakekeeper |
 | :-- | :-- | :-- |
-| v3 CREATE (R1) | | |
-| VARIANT create/insert/read (R1) | | |
-| Row-level DML | | |
-| Views (soft) | | |
-| Trino R/W (R2) | | |
-| Spark R/W (R2) | | |
-| Databricks read (R2) | | |
-| RBAC (soft) | | |
-| Credential vending (pass 2) | | |
-| Deploy on VM/K8s + HA | | |
+| v3 CREATE (R1) | ✅ | ✅ |
+| VARIANT create/insert/read (R1) | ✅ | ✅ |
+| Row-level DML (UPDATE/DELETE/MERGE) | ✅ | ✅ |
+| Views (soft) | ✅ | ✅ |
+| DROP table/view | ✅ (needs DROP_WITH_PURGE_ENABLED) | ✅ (purge via LK background task) |
+| Trino R/W (R2) | ✅ | ✅ |
+| Spark R/W (R2) | ⏳ | ⏳ |
+| Databricks CRUD incl v3+VARIANT (R2) | 🚧 firewall 8181 | 🚧 firewall 8282 |
+| RBAC (soft) | ⏳ (Polaris grants) | ⏳ (OpenFGA/Cedar) |
+| Storage auth used | own keys (skip-subscoping; no IAM role) | own keys (Trino 483 doesn't consume LK remote signing) |
+| Credential vending (pass 2) | ⏳ needs roleArn | ➖ needs STS role (remote signing not consumed by Trino 483) |
+| Deploy on VM | ✅ running | ✅ running |
+
+**Read so far:** both OSS catalogs meet the v3+VARIANT + external-Trino-R/W hard requirements that Nessie failed.
+Neither did credential vending in this PoC (no IAM role) — both fell back to Trino's own S3 keys. The decisive
+Databricks-CRUD test (incl. v3+VARIANT) is pending the 8181/8282 firewall opening.
 
 **Decision** (per `iceberg_catalog_evaluation.md` §7d): a catalog passing v3 CREATE + VARIANT + Trino/Spark R/W
 (+ Databricks read or fallback) → adopt it. Neither → escalate for the paid AWS S3 Tables fallback.
