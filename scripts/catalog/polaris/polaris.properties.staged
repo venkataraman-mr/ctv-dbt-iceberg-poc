@@ -1,6 +1,6 @@
 # Trino catalog: connect Trino -> Apache Polaris (Iceberg REST) for the catalog PoC.
 # Drop into infra/trino/catalog/ (or the PoC Trino's catalog dir) as `polaris.properties`, then
-# `docker compose up -d trino`. Values come from your Polaris bootstrap (see docs/catalog_poc_runbook.md).
+# `docker compose up -d trino`. Values come from your Polaris bootstrap (see docs/catalog/catalog_poc_runbook.md).
 #
 # Polaris auth = OAuth2 client-credentials using a Polaris *principal's* client id + secret.
 # Polaris can VEND S3 credentials, so Trino needs no S3 keys (this also tests credential vending).

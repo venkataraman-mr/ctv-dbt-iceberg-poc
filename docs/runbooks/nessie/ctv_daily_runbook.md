@@ -2,7 +2,7 @@
 
 Operator runbook for running the **CTV occurrence flow daily** on the Trino/dbt/Iceberg stack. It sequences
 every job in dependency order and gives the exact run + verification commands. This is the *pipeline* runbook;
-for VM stand-up (Docker, Nessie, Trino, smoke test) see **`docs/runbook.md` §0–2**, and for per-piece design
+for VM stand-up (Docker, Nessie, Trino, smoke test) see **`docs/runbooks/nessie/runbook.md` §0–2**, and for per-piece design
 detail see the linked piece docs in each step.
 
 All five jobs are dbt **tags** named after their Databricks job, so each runs with one `--select tag:<JOB>`:
@@ -26,7 +26,7 @@ gate (5) can classify occurrences against `gold.creative`. Run the steps in this
 
 ## Part 1 — One-time setup (run once per environment)
 
-Do this once when standing up the stack (after `docs/runbook.md` §0–2). Skip on daily runs.
+Do this once when standing up the stack (after `docs/runbooks/nessie/runbook.md` §0–2). Skip on daily runs.
 
 **1a. Iceberg tables + watermark seeds (Trino).** Creates every persistent table and seeds the Piece-1 /
 Piece-3 version watermarks (ddl/nessie/03), the Piece-4 timestamp watermarks (ddl/nessie/08), and the Piece-5 watermarks
@@ -96,7 +96,7 @@ The detailed steps below add the verification queries for each.
 ### Step 0 — Reference dims (hive 14 + UC 6)
 
 Refreshes the reference/lookup dimensions the creative + occurrence joins depend on. Usually the daily
-`02:15 UTC` cron; run manually to refresh on demand. Detail: `docs/runbook.md` §3/§3b, `docs/reference_tables.md`.
+`02:15 UTC` cron; run manually to refresh on demand. Detail: `docs/runbooks/nessie/runbook.md` §3/§3b, `docs/pipeline/reference_tables.md`.
 
 ```bash
 docker compose exec ingestion python -m ingestion.reference_sync                 # all 14 hive tables
@@ -111,7 +111,7 @@ docker exec -i trino trino --execute "SELECT table_schema, table_name FROM icebe
 
 Lands `.bz2`/plain-JSON from `s3://…/landing/ctv/ingestion/` into bronze staging (archiving processed files),
 then the dbt-trino incremental transforms staging → `bronze.digital_raw_occurrence` (reads only new inserts via
-`system.table_changes` after the first full load). Detail: `docs/ctv_ingestion.md`.
+`system.table_changes` after the first full load). Detail: `docs/pipeline/ctv_ingestion.md`.
 
 **1a. Place the day's `.bz2` files into S3 (local Windows machine, has AWS creds).** Drop the day's
 `.bz2` files into the local landing folder (default `C:\Users\venkata.adapa\Downloads\ctv_landing`), then
@@ -142,7 +142,7 @@ docker exec -i trino trino --execute "SELECT count(*), min(capture_month), max(c
 ### Step 2 — Piece 3 Job A: raw occ → creative staging (Postgres)
 
 Pushes new CTV creatives from `bronze.digital_raw_occurrence` into the Postgres clones (creative staging +
-first-seen seed), Trino/dbt-native. Detail: `docs/ctv_creative_push.md`.
+first-seen seed), Trino/dbt-native. Detail: `docs/pipeline/ctv_creative_push.md`.
 
 ```bash
 docker compose run --rm dbt dbt run --select +crtv_staging_final                          # by model (whole Job A DAG)
@@ -158,7 +158,7 @@ docker exec -i trino trino --execute "SELECT last_commit_version, transaction_st
 
 Two version-watermarked sub-pipelines (parallel-safe after the watermark-table partitioning): first-seen
 update (`CALL` the update proc → earliest occurrence) + occurrence summary (CDF ∪ parked buffer → upsert proc
-→ park/release MERGE). Detail: `docs/ctv_creative_push.md`.
+→ park/release MERGE). Detail: `docs/pipeline/ctv_creative_push.md`.
 
 ```bash
 docker compose run --rm dbt dbt run --select crtv_firstseen crtv_occ_summary_candidate crtv_occ_summary_final   # by model
@@ -175,7 +175,7 @@ the external classification engine; `ALL` runs Mode 1 (new inserts) then Mode 2 
 updates), both watermark-driven, so **only changed rows are picked and processed**. **(b)** run the sync-back
 tag, which reads the seeded `tempwork.*_ctv_poc` clones and MERGEs into Iceberg `gold.*`/`silver.*` in the
 reconciled Databricks DAG order (dedup ∥ first-seen → creative → first-seen-info → occurrence-id → last-seen →
-component ∥ product-resync). Detail: `docs/ctv_creative_seed.md`, `docs/ctv_creative_sync_plan.md`.
+component ∥ product-resync). Detail: `docs/pipeline/ctv_creative_seed.md`, `docs/pipeline/ctv_creative_sync_plan.md`.
 
 ```sql
 -- (a) Postgres (SQL client; needs tempwork_admin_role): seed only the day's changes
@@ -204,7 +204,7 @@ docker exec -i trino trino --execute "SELECT watermark_name, end_timestamp, tran
 
 The occurrence gate: new raw occ ∪ hold buffer → deployment chains → enrich → classify against `gold.creative`
 (Not Hold / Hold) → reserve `occurrence_id` (75 B Postgres sequence) → MERGE `gold.digital_gold_occurrence`;
-park/release the hold buffer; Half B applies creative-change updates. Detail: `docs/ctv_occurrence_gold_plan.md`.
+park/release the hold buffer; Half B applies creative-change updates. Detail: `docs/pipeline/ctv_occurrence_gold_plan.md`.
 
 ```bash
 docker compose run --rm dbt dbt ls  --select tag:DIGITAL_RAW_OCC_TO_GOLD_OCC --output name   # 6 models
@@ -235,4 +235,4 @@ First validated full run (2026-08-11): 811,764 raw → **746,245 gold occurrence
   writers don't collide; still, run the pipeline steps in the order above (they have real data dependencies).
 - **Failure handling.** Steps are idempotent MERGEs — re-running a failed step is safe (the watermark only
   advances on success). Fix the cause, re-run that step, then continue.
-- **VM stand-up / infra** (Docker, Nessie, Trino, smoke test, Postgres reachability): `docs/runbook.md`.
+- **VM stand-up / infra** (Docker, Nessie, Trino, smoke test, Postgres reachability): `docs/runbooks/nessie/runbook.md`.

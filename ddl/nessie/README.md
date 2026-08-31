@@ -37,7 +37,7 @@ schema with a `_ctv_poc` suffix — clone tables (`creative_staging_ctv_poc`, `c
 occ-summary upsert), the `creative_id_seq_ctv_poc` sequence, and the id-block table + reservation proc.
 Real `creatives.*` are untouched. Requires membership in `tempwork_admin_role` (a DBA event trigger
 reassigns new `tempwork` tables to it: `GRANT tempwork_admin_role TO <login>;`). See
-`docs/ctv_creative_push.md`. **Iceberg changes for Job B:** `bronze.missing_digital_occurrence_for_summary`
+`docs/pipeline/ctv_creative_push.md`. **Iceberg changes for Job B:** `bronze.missing_digital_occurrence_for_summary`
 gains `capture_timestamp` (ddl/nessie/04); `silver.watermark_control` is **partitioned by `watermark_name`**
 (ddl/nessie/03) so concurrent watermarked jobs don't collide (retrofit = recreate preserving rows — see the
 ddl/nessie/03 comment). Watermark **seed rows** for Piece 3 Job A/B (`DIGITAL_RAW_OCC_TO_CRTV_STAGING`,
@@ -60,14 +60,14 @@ delete-in-scope + insert. Every load is scope-gated to our CTV clones + their re
 joined to the run's `_seed_idmap`); descriptor fields come from clone staging/first_seen for our creatives,
 prod for external parents. Real `creatives.*`/`ml_results.*` are read-only; `creative_archive` and the
 `reference.*`/`config.*`/`productcentral.*` lookups are not cloned. **Mode 1 validated on the clones; Mode 2
-pending the first daily-ingestion run.** See `docs/ctv_creative_seed.md`.
+pending the first daily-ingestion run.** See `docs/pipeline/ctv_creative_seed.md`.
 
 **Postgres side (Piece 4 sync-back):** `ddl/postgres/nessie/piece4_sync_procs_ctv_poc.sql` (run once) clones the two
 prod `get_changes` procs — `sp_dbx_creative_get_changes_for_databricks` and
 `sp_dbx_component_get_changes_for_databricks` — retargeted to the `tempwork *_ctv_poc` clones (jobwork scratch
 → tempwork; reference/config/`template` + read-only `creative_archive` kept as prod reads). They build the
 `*_forsync_tmp_ctv_poc` payloads the dbt sync models read. Archive is inert (the dbt caller passes a future
-`ca_flag`). Scratch index names are `_ctv_poc`-suffixed. See `docs/ctv_creative_sync_plan.md`.
+`ca_flag`). Scratch index names are `_ctv_poc`-suffixed. See `docs/pipeline/ctv_creative_sync_plan.md`.
 
 **Postgres side (Piece 5 occurrence-id sequence):** `ddl/postgres/nessie/piece5_occ_id_seq_ctv_poc.sql` (run once)
 creates `tempwork.occurrence_id_seq_ctv_poc` (**START 75,000,000,000** per Venkat — occurrence_id must be a
@@ -77,10 +77,10 @@ calls the proc through the `reserve_occurrence_ids(n)` dbt macro (Trino `system.
 `system.query`), and assigns `block_start + row_number()-1` — the same block-reservation pattern as
 `creative_id_seq_ctv_poc`. Requires `tempwork_admin_role`. `deployment_chain_id` (lower stakes, gate only
 joins/existence-checks it) stays a deterministic `from_big_endian_64(xxhash64(md5))` surrogate — no sequence.
-See `docs/ctv_occurrence_gold_plan.md`.
+See `docs/pipeline/ctv_occurrence_gold_plan.md`.
 
 The **14 reference tables** (`km_preparation_db.*`, `km_preparation_gold_db.*`, `productcentral.*`) are
-provisioned by the Option C reference sync (`ingestion/reference_sync.py`) — see `docs/reference_tables.md`.
+provisioned by the Option C reference sync (`ingestion/reference_sync.py`) — see `docs/pipeline/reference_tables.md`.
 Three more reference dims used by Pieces 3–5 (`reference.creative_match_type`, `global_market`,
 `provider_global_market_map`) are declared as dbt sources but **not yet synced** — their Delta source
 path differs from the 14 (needs confirmation before adding to the sync). Postgres read tables

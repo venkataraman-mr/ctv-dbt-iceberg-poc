@@ -6,7 +6,7 @@
   creatives + imported parents, so the prod provider_id filter is unnecessary.
 
   Timestamp watermark (MERGE-written target -> no version CDF): read updated_timestamp > start (NO lag).
-  UTC/no-miss discipline (docs/ctv_creative_sync_plan.md §2):
+  UTC/no-miss discipline (docs/pipeline/ctv_creative_sync_plan.md §2):
     * watermark stored UTC; the clone's updated_timestamp is tz-naive UTC (prod writes AT TIME ZONE 'UTC'),
       so the pushed-down predicate uses a NAIVE-UTC literal (no implicit tz shift);
     * NO safety lag (removed 2026-08-10): the whole clone is (re)seeded at ~one timestamp, so a 1-min lag

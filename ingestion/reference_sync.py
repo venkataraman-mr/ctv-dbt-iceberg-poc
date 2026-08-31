@@ -28,7 +28,7 @@ def _t(db: str, table: str) -> dict:
     return {"delta_path": f"{_BASE}/{db}/{table}", "target_schema": db, "target_table": table}
 
 
-# All 14 hive_metastore reference tables to mirror (see docs/reference_tables.md).
+# All 14 hive_metastore reference tables to mirror (see docs/pipeline/reference_tables.md).
 TABLE_MAP = [
     _t("km_preparation_db",      "adscore_provided_adservers"),
     _t("km_preparation_db",      "data_provider"),

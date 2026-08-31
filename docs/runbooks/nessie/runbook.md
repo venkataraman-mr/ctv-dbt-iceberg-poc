@@ -2,7 +2,7 @@
 
 > This is the **infra / stand-up + per-piece build** runbook (VM setup, foundation, each piece's setup &
 > validation history). For the consolidated **daily end-to-end pipeline run** (reference sync → ingestion →
-> Pieces 1–5, in order, with all run + verify commands), see **`docs/ctv_daily_runbook.md`**.
+> Pieces 1–5, in order, with all run + verify commands), see **`docs/runbooks/nessie/ctv_daily_runbook.md`**.
 
 ## 0. VM prerequisites & setup
 
@@ -51,7 +51,7 @@ the data/metadata files land under `s3://dataplatformpoc-venketa/warehouse/`.
 Mirrors 14 `hive_metastore` Delta reference tables from Azure ADLS into Iceberg on S3, each under a
 schema named after its **source database** (`hive_metastore.<db>.<table>` → `iceberg.<db>.<table>`;
 schemas `km_preparation_db`, `km_preparation_gold_db`, `productcentral`). **The full source→target
-table inventory (names, ADLS paths, reader, row counts) is in `docs/reference_tables.md`.** The load
+table inventory (names, ADLS paths, reader, row counts) is in `docs/pipeline/reference_tables.md`.** The load
 is **streamed + atomic**: it clears and reloads each table via one transaction (delete-all + append
 batches), so it is memory-bounded (safe for multi-million-row tables) and never drops the table — a
 mid-run failure leaves the prior data intact.
@@ -136,7 +136,7 @@ End-to-end on the VM: S3 `.bz2`/plain-JSON → bronze staging (PyIceberg landing
 staging->raw incremental (`bronze.digital_raw_occurrence`). Incremental reads via Trino
 `system.table_changes` driven by the version watermark. `creative_url_hash` = exact Spark
 `xxhash64(seed 42)` precomputed at landing. Persistent tables pre-created by DDL (`ddl/nessie/`). Full
-detail, run steps, and design notes: **`docs/ctv_ingestion.md`**; table structures: **`ddl/nessie/README.md`**.
+detail, run steps, and design notes: **`docs/pipeline/ctv_ingestion.md`**; table structures: **`ddl/nessie/README.md`**.
 
 ## 4c. Pieces 3–5 tables provisioned (2026-07-28)
 All 20 persistent Iceberg tables pre-created by DDL (`ddl/nessie/00`–`07`): bronze staging/raw + creative (5),
@@ -155,7 +155,7 @@ ordered post-hooks (maintain `creative_unique_urls`/`creative_autochaff` → cro
 temp table → `CALL` the cloned insert proc via `postgres.system.execute` → advance the **version**
 watermark last). `creative_id` = a Postgres sequence reserved as a `[start,end]` block (replaces the
 Universal Creative API). All Postgres objects are `tempwork.*_ctv_poc` **clones** — real `creatives.*`
-untouched. Full detail + build learnings: **`docs/ctv_creative_push.md`**.
+untouched. Full detail + build learnings: **`docs/pipeline/ctv_creative_push.md`**.
 
 Setup (once): run the Postgres clone bootstrap, then seed the Job A watermark row:
 ```bash
@@ -172,7 +172,7 @@ docker exec -i trino trino --execute "SELECT count(*) FILTER (WHERE is_staged) F
 docker exec -i trino trino --execute "SELECT last_commit_version, transaction_status FROM iceberg.silver.watermark_control WHERE watermark_name='DIGITAL_RAW_OCC_TO_CRTV_STAGING'"
 ```
 First validated run: 26,592 creatives staged, `creative_first_seen` seeded 1:1, `creative_autochaff` 0,
-watermark `SUCCEEDED`. (Reset commands for a clean re-test are in `docs/ctv_creative_push.md`.)
+watermark `SUCCEEDED`. (Reset commands for a clean re-test are in `docs/pipeline/ctv_creative_push.md`.)
 
 ## 4e. Piece 3 — Job B (first-seen update + occurrence summary) — VALIDATED (2026-08-05)
 Two independent **version-watermarked** sub-pipelines, run together, Trino/dbt-native. First-seen update
@@ -180,7 +180,7 @@ Two independent **version-watermarked** sub-pipelines, run together, Trino/dbt-n
 occurrence). Occurrence summary (`crtv_occ_summary_candidate` → `crtv_occ_summary_final`,
 `DIGITAL_RAW_OCC_SUMMARY_PSQL`) → CDF unioned with the parked buffer `missing_digital_occurrence_for_summary`,
 aggregate → `CALL` the upsert proc, then a park/release `MERGE` back into the buffer. Full detail:
-**`docs/ctv_creative_push.md`**.
+**`docs/pipeline/ctv_creative_push.md`**.
 
 Setup (once):
 ```bash
@@ -219,7 +219,7 @@ will run against `tempwork.*_ctv_poc` clones, so production creative data must b
 **pure Postgres seeding proc** does this — no Trino/dbt (both prod `creatives.*`/`ml_results.*` and `tempwork`
 are in the same Postgres). Anchor = creatives in `creative_staging_ctv_poc` (keyed on `creative_url_hash`);
 their one-hop dedup parents are pulled in too. Our creatives take the reserved PoC id; external parents keep
-their prod id (26 B reserved boundary). Full design + decisions: **`docs/ctv_creative_seed.md`**.
+their prod id (26 B reserved boundary). Full design + decisions: **`docs/pipeline/ctv_creative_seed.md`**.
 
 Setup (once, on prod Postgres via a SQL client — `psql` is NOT on the VM; requires `tempwork_admin_role`):
 ```sql
@@ -252,7 +252,7 @@ Ports the Databricks `SYNC_CREATIVES_TO_DATABRICKS` job (8 tasks) reading the se
 clones → Iceberg `gold.*`/`silver.*`. Every Databricks Delta `table_changes` read becomes a **timestamp
 (column) watermark** scan — Trino `table_changes` is append-only, and these gold tables are MERGE-written.
 UTC, **no lag** (`> start`); idempotent MERGEs. Full plan + per-task map + all learnings + commands:
-**`docs/ctv_creative_sync_plan.md` §8–12**.
+**`docs/pipeline/ctv_creative_sync_plan.md` §8–12**.
 
 Setup (once):
 ```bash
@@ -297,7 +297,7 @@ Databricks job; tag renamed; scratch cleanup re-enabled; first-seen 1-min lag re
 ## 4h. Piece 5 — gold occurrence flow (Trino/dbt-native) — COMPLETE & VALIDATED (2026-08-11)
 Ports the Databricks `DigitalRawocctoGoldocc` job → **6 staged models** (tag `DIGITAL_RAW_OCC_TO_GOLD_OCC`), two halves,
 two watermarks. This is the **last piece** — the CTV occurrence flow now runs end-to-end on Trino/dbt/Iceberg. Full plan
-+ all learnings + commands: **`docs/ctv_occurrence_gold_plan.md`**.
++ all learnings + commands: **`docs/pipeline/ctv_occurrence_gold_plan.md`**.
 
 Setup (once):
 ```bash

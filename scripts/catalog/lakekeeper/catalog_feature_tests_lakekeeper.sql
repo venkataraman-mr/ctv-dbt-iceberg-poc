@@ -6,7 +6,7 @@
 -- Run top to bottom in DBeaver (on the Trino connection); note pass/fail per block.
 --
 -- Covers the hard/soft requirements testable in Trino SQL: v3, VARIANT, DML, views.
--- RBAC + credential vending are validated separately (see docs/catalog_poc_runbook.md Part B).
+-- RBAC + credential vending are validated separately (see docs/catalog/catalog_poc_runbook.md Part B).
 -- ============================================================
 
 -- 0. namespace + clean slate

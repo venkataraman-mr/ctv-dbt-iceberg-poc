@@ -7,7 +7,7 @@ Piece-4-populated `gold.creative`, enrich, and MERGE into `gold.digital_gold_occ
 buffer). This is the LAST piece — with it the **whole PoC (Pieces 1–5) is complete**. It also **lit up
 occurrence-id + last-seen** (the Piece-4 tasks that read `gold.digital_gold_occurrence`; validated after Half A).
 The full job runs as `dbt run --select tag:DIGITAL_RAW_OCC_TO_GOLD_OCC`. Companion to the creative sync plan
-(`docs/ctv_creative_sync_plan.md`).
+(`docs/pipeline/ctv_creative_sync_plan.md`).
 
 First full run (2026-08-11): 811,764 raw → 746,245 gold occurrences (occurrence_id block [75,000,000,000 …
 75,000,746,244]) + 65,519 held in the buffer; deployment chains/roles/mediators matched prod; Half B a clean

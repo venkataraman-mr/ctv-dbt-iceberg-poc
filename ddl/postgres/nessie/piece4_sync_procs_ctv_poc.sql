@@ -13,7 +13,7 @@
 -- ARCHIVE PARKED: the creative proc still references real creatives.creative_archive (read-only). The
 -- dbt caller passes ca_flag_timestamp far in the FUTURE ('9999-12-31'), so the archive branches return
 -- ZERO rows and no real-archive data enters the clone flow. Revisit archive at end of PoC (see
--- docs/ctv_creative_sync_plan.md §7).
+-- docs/pipeline/ctv_creative_sync_plan.md §7).
 --
 -- Requires tempwork_admin_role membership (event trigger reassigns new tempwork tables).
 -- =====================================================================================

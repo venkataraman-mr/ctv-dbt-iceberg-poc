@@ -5,7 +5,7 @@ occurrence pipeline as it splits across two platforms — the new open-source st
 (Trino · dbt · Iceberg · Airflow, on Kubernetes)** and **Azure Databricks (Unity Catalog managed Iceberg)** —
 for two specific flows: the **breaking-creative** flow and the **last-seen/first-seen** creative update. It also
 records the implementation and testing considerations to carry into the build. Engine-capability basis for the
-design: `docs/uc_managed_iceberg_trino_write_capabilities.md` (validated: Trino can **read + append** UC-managed
+design: `docs/catalog/uc_managed_iceberg_trino_write_capabilities.md` (validated: Trino can **read + append** UC-managed
 Iceberg but **cannot** `UPDATE`/`DELETE`/`MERGE`; Databricks can do full DML).
 
 ---
@@ -160,6 +160,6 @@ Ordered by risk. These are the things to validate during development, not open d
 
 ### Related docs
 
-- `docs/uc_managed_iceberg_trino_write_capabilities.md` — engine-capability basis (read/append vs. mutate; CDC).
-- `docs/uc_iceberg_rest_access_request.md` — UC access, endpoint, Azure-key config for the Trino→UC path.
+- `docs/catalog/uc_managed_iceberg_trino_write_capabilities.md` — engine-capability basis (read/append vs. mutate; CDC).
+- `docs/catalog/uc_iceberg_rest_access_request.md` — UC access, endpoint, Azure-key config for the Trino→UC path.
 - `docs/ctv_dbt_iceberg_poc.md` — project checkpoint (§8.11 UC interop, §8.8/8.9 CDC & deletes).

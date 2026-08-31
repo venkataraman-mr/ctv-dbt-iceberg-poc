@@ -61,7 +61,7 @@ Notes for developers:
   so lowering `REF_SYNC_BATCH_ROWS` also relieves it. (Confirm whether the pipeline actually consumes
   that QC report — if not, drop it from `uc_reference_sync.py` rather than mirror a multi-GB table.)
 - **Schema is derived on read**, per run, from the source Delta schema (see `reference_sync.py` and
-  `docs/runbook.md` §3). Normalization applied: binary columns → base64 strings; timestamps → UTC
+  `docs/runbooks/nessie/runbook.md` §3). Normalization applied: binary columns → base64 strings; timestamps → UTC
   **with time zone** (Iceberg `timestamptz`), matching Databricks `TIMESTAMP`. Additive source-column
   changes auto-evolve the Iceberg table; type/removed-column changes fail loudly.
 - To inspect an actual column schema in Trino:

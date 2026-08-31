@@ -6,7 +6,7 @@ document specifies **how the Databricks (Unity Catalog) job reads that AWS table
 networking/security prerequisites, and how it was tested.
 
 > **Catalog:** **Apache Polaris** is the go-to catalog (the catalog PoC selected it; Lakekeeper is the equally
-> capable OSS alternative — see `docs/iceberg_catalog_evaluation.md`). **Nessie is ruled out** — it cannot host
+> capable OSS alternative — see `docs/catalog/iceberg_catalog_evaluation.md`). **Nessie is ruled out** — it cannot host
 > Iceberg **v3 + VARIANT** over REST, the business hard requirement. Nessie details are retained below **for
 > reference only, marked *not preferred*.**
 >
@@ -18,8 +18,8 @@ networking/security prerequisites, and how it was tested.
 > unchanged from the original design. Test assets: `databricks/polaris_uc_cluster_read_test.py`,
 > `scripts/catalog/polaris/polaris_uc_read_seed.sql`, `databricks/README_catalog_crosscloud.md`.
 
-Related: `docs/ctv_productionization_crosscloud_design.md` (overall cross-cloud plan),
-`docs/iceberg_catalog_evaluation.md` (catalog decision), `docs/uc_managed_iceberg_trino_write_capabilities.md`
+Related: `docs/crosscloud/ctv_productionization_crosscloud_design.md` (overall cross-cloud plan),
+`docs/catalog/iceberg_catalog_evaluation.md` (catalog decision), `docs/catalog/uc_managed_iceberg_trino_write_capabilities.md`
 (engine capability findings).
 
 ---

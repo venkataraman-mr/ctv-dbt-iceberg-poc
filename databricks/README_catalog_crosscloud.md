@@ -212,5 +212,5 @@ SG allows only Databricks' source), so Trino would hang. Polaris avoids all of t
 | Extra config quirk | — | none | BASE_URI must be public |
 
 Cluster (Polaris/Lakekeeper): DBR 18 LTS, non-UC, own S3 keys, `client.region` set, catalog config in the cluster
-Spark config. Full decision context: `../docs/iceberg_catalog_evaluation.md`; stand-up steps:
-`../docs/catalog_poc_runbook.md`.
+Spark config. Full decision context: `../docs/catalog/iceberg_catalog_evaluation.md`; stand-up steps:
+`../docs/catalog/catalog_poc_runbook.md`.

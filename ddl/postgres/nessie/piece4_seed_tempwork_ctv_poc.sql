@@ -48,7 +48,7 @@
 --   * DELETE-in-scope + INSERT: product / celebrity / competitor / dedupe_map (multi-row per creative,
 --     so prod removals propagate) and the EXTERNAL-parent first_seen / occ_summary rows.
 --   NOTE: holding/staging_vx0 use upsert, so a prod-side REMOVAL (e.g. a QA release deleting a holding
---   row) will not retract the clone row within seeding — accepted for the PoC (see docs/ctv_creative_seed.md).
+--   row) will not retract the clone row within seeding — accepted for the PoC (see docs/pipeline/ctv_creative_seed.md).
 --
 -- NO indexes / partitioning / triggers / foreign keys on clones (matches the Piece 3 pattern).
 -- Constraints kept: primary key, unique, check. holding gets a PRIMARY KEY on creative_id (added for the

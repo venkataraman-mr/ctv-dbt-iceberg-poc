@@ -7,7 +7,7 @@
 -- Replace <SCHEMA> with a test namespace (e.g. ctv_catalog_poc).
 --
 -- Covers the hard/soft requirements that are testable in Trino SQL: v3, VARIANT, DML, views.
--- RBAC and credential vending are validated separately (see docs/catalog_poc_runbook.md Part A §5-6).
+-- RBAC and credential vending are validated separately (see docs/catalog/catalog_poc_runbook.md Part A §5-6).
 -- Run top to bottom; note pass/fail for each numbered block in the results matrix.
 -- ============================================================
 

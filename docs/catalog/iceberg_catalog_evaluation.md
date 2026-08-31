@@ -6,7 +6,7 @@ requirement** — R1 (v3 + VARIANT over REST), R2 (external Trino/Spark **and Da
 (open-source). **Nessie is ruled out** (no v3 over REST). Since the stack is all-AWS, **AWS Glue** is also carried
 as the AWS-native **managed fallback** (fails R3; v3 is GA on the Spark engine but Trino-create-v3 is untested) —
 compared on Kubernetes ops (§4b) and infra/cost across dev+test+prod (§4c). The remaining real choice is
-**Polaris vs Lakekeeper** on soft/operational grounds (see §5). Stand-up steps: `docs/catalog_poc_runbook.md`;
+**Polaris vs Lakekeeper** on soft/operational grounds (see §5). Stand-up steps: `docs/catalog/catalog_poc_runbook.md`;
 Databricks cross-cloud: `databricks/README_catalog_crosscloud.md`.
 
 **PoC results at a glance:**
@@ -18,8 +18,8 @@ Databricks cross-cloud: `databricks/README_catalog_crosscloud.md`.
 | R2 — Databricks CRUD incl. v3+VARIANT | ✅ | ✅ | ❌ |
 | R3 — open-source | ✅ Apache | ✅ Apache-2.0 | ✅ |
 
-Companion findings: `docs/uc_managed_iceberg_trino_write_capabilities.md` (engine capabilities),
-`docs/crosscloud_read_databricks_design.md` (Databricks read path), the Trino/Databricks test scripts under
+Companion findings: `docs/catalog/uc_managed_iceberg_trino_write_capabilities.md` (engine capabilities),
+`docs/crosscloud/crosscloud_read_databricks_design.md` (Databricks read path), the Trino/Databricks test scripts under
 `databricks/` and `scripts/` (`catalog_feature_tests*.sql`, `*_crossengine_verify.sql`).
 
 ---
@@ -282,9 +282,9 @@ Hard-requirement gate = **#1, #2, #3/#4** (and #5 or a read fallback per §5). #
 
 ### 7b. Per-candidate quick-start
 - **Apache Polaris (DONE):** self-hosted via the main compose (Docker; Helm for K8s) over S3 → Trino + Databricks
-  → #1–#7 pass; #8 (RBAC/vending) pending an IAM role. See `docs/catalog_poc_runbook.md` Part A.
+  → #1–#7 pass; #8 (RBAC/vending) pending an IAM role. See `docs/catalog/catalog_poc_runbook.md` Part A.
 - **Lakekeeper (DONE):** Rust service via the main compose (Helm for K8s) over S3 → Trino + Databricks → #1–#7
-  pass; #8 pending. See `docs/catalog_poc_runbook.md` Part B.
+  pass; #8 pending. See `docs/catalog/catalog_poc_runbook.md` Part B.
 - **AWS Glue (fallback — only if R3 relaxed):** the single open test is **#1/#3 with Trino** — point Trino at a
   `glue` catalog, run `CREATE TABLE … WITH (format_version = 3)` with a `variant` column, then `SHOW CREATE TABLE`
   to confirm it's really v3 (not silently v2, which is the likely outcome given the Glue CreateTable API is v1/v2).

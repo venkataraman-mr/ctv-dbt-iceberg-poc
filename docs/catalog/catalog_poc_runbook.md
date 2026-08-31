@@ -6,7 +6,7 @@ Trino, many catalogs). The incumbent **Nessie** is the baseline that failed the 
 wire Trino → feature tests → cross-cloud (Databricks) for both candidates, plus the config fixes we hit along the
 way (see **Gotchas & fixes** at the end). Decision framework + full catalog landscape:
 [`iceberg_catalog_evaluation.md`](iceberg_catalog_evaluation.md). Databricks cross-cloud details:
-[`../databricks/README_catalog_crosscloud.md`](../databricks/README_catalog_crosscloud.md).
+[`../../databricks/README_catalog_crosscloud.md`](../../databricks/README_catalog_crosscloud.md).
 
 **Status (2026-08-26):** both Polaris (1.7.0) and Lakekeeper (0.13.3) **pass every hard requirement** — v3+VARIANT,
 external Trino R/W, and Databricks cross-cloud CRUD incl. v3+VARIANT. Nessie is ruled out. See the results matrix.
@@ -38,7 +38,7 @@ external Trino R/W, and Databricks cross-cloud CRUD incl. v3+VARIANT. Nessie is 
 | `scripts/catalog/polaris/catalog_feature_tests_polaris.sql`, `scripts/catalog/lakekeeper/catalog_feature_tests_lakekeeper.sql` | Pre-filled per-catalog test scripts (DBeaver) |
 | `scripts/catalog/polaris/polaris_crossengine_verify.sql`, `scripts/catalog/lakekeeper/lakekeeper_crossengine_verify.sql` | Trino-side cross-engine round-trip with Databricks |
 | `scripts/catalog/nessie/test_trino_v3_variant.sql` / `.sh` | Trino v3+VARIANT capability test on the native Nessie (`iceberg`) catalog |
-| `../databricks/README_catalog_crosscloud.md` | Databricks cross-cloud runbook (Nessie/Polaris/Lakekeeper) + notebooks |
+| `../../databricks/README_catalog_crosscloud.md` | Databricks cross-cloud runbook (Nessie/Polaris/Lakekeeper) + notebooks |
 
 ---
 
@@ -162,7 +162,7 @@ role) — Lakekeeper then does S3 **remote signing** (the Polaris skip-subscopin
 4. **Feature tests:** run `scripts/catalog/lakekeeper/catalog_feature_tests_lakekeeper.sql` (or the `<CATALOG>` template with
    `lakekeeper` / `ctv_catalog_poc`) top-to-bottom in DBeaver. Record pass/fail per block in the matrix.
 5. **RBAC + cross-cloud:** Lakekeeper authz is OpenFGA/Cedar (soft req). Databricks cross-cloud CRUD incl.
-   v3+VARIANT **passed** — see Part C and `../databricks/README_catalog_crosscloud.md`. Note the **BASE_URI**
+   v3+VARIANT **passed** — see Part C and `../../databricks/README_catalog_crosscloud.md`. Note the **BASE_URI**
    requirement below.
 
 **Lakekeeper BASE_URI (the cross-cloud gotcha):** Lakekeeper advertises `LAKEKEEPER__BASE_URI` in `GET /config`,
@@ -177,7 +177,7 @@ public 8282 (SG allows only Databricks' source) and Trino hangs.
 **Databricks (done — PASS for both catalogs).** Non-UC DBR 18 LTS cluster + manual Spark Iceberg REST attach
 (UC can't federate a generic REST catalog). Full CRUD incl. **v3+VARIANT** works against both Polaris and
 Lakekeeper, plus cross-engine round-trip (a table one engine writes, the other reads). Full steps, cluster Spark
-config, and per-catalog auth are in [`../databricks/README_catalog_crosscloud.md`](../databricks/README_catalog_crosscloud.md).
+config, and per-catalog auth are in [`../../databricks/README_catalog_crosscloud.md`](../../databricks/README_catalog_crosscloud.md).
 Key points learned:
 - **Cluster Spark config, not the notebook** — `spark.sql.extensions` is a *static* config (`spark.conf.set`
   fails with `CANNOT_MODIFY_STATIC_CONFIG`); register catalogs in the cluster Spark config and restart.

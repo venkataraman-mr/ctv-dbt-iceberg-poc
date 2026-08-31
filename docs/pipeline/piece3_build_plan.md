@@ -185,8 +185,8 @@ adclarity_url). `occurrence_description` and `occurrence_link_url` are NULL for 
 - `ddl/nessie/03` watermark seed rows: `DIGITAL_RAW_OCC_TO_CRTV_STAGING` (version) +
   `DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE` (timestamp).
 - Schedules: `scripts/cron/` — Job A */20min, Job B hourly.
-- Docs: `docs/ctv_creative_push.md` (Piece 3); update README + `docs/ctv_dbt_iceberg_poc.md` +
-  `docs/runbook.md`. (Long Drive checkpoint later, on the checkpoint formatter.)
+- Docs: `docs/pipeline/ctv_creative_push.md` (Piece 3); update README + `docs/ctv_dbt_iceberg_poc.md` +
+  `docs/runbooks/nessie/runbook.md`. (Long Drive checkpoint later, on the checkpoint formatter.)
 
 ## Verify during build (don't assume)
 - `postgres.system.execute` + `postgres.system.query` actually work against our wired `postgres`

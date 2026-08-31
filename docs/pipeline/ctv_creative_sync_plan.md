@@ -3,7 +3,7 @@
 Status: **COMPLETE (built) — all 8 tasks ported; the whole job runs end-to-end in one command in the
 Databricks DAG order (2026-08-10).** This is the port of the Databricks `SYNC_CREATIVES_TO_DATABRICKS` job
 (8 tasks) to our Trino/dbt/Iceberg stack, reading the seeded `tempwork.*_ctv_poc` clones and writing Iceberg
-`gold.*` / `silver.*`. Companion to the seed doc (`docs/ctv_creative_seed.md`).
+`gold.*` / `silver.*`. Companion to the seed doc (`docs/pipeline/ctv_creative_seed.md`).
 
 Validation status: **tasks 1 (creative), 2 (first-seen), 3 (dedup), 5 (first-seen-info) VALIDATED** on real
 CTV data; **occurrence-id + task 6 (last-seen) VALIDATED (2026-08-11)** once Piece 5 populated

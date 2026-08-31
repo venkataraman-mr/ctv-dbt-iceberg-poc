@@ -11,7 +11,7 @@ Iceberg REST Catalog API + OAuth2 (client credentials).
 > **Status — GRANTED & TESTED (2026-08-18/19).** Access was provisioned and the interop was validated
 > end-to-end. **Read (`SELECT`) and append (`INSERT`) work** on UC-managed Iceberg (v2 and v3). **Row-level
 > `UPDATE`/`DELETE`/`MERGE` and update/delete CDC do not work from Trino** — an engine-side (Trino 483) limit,
-> not an access problem. Full findings: `docs/uc_managed_iceberg_trino_write_capabilities.md`. This file is now
+> not an access problem. Full findings: `docs/catalog/uc_managed_iceberg_trino_write_capabilities.md`. This file is now
 > the record of *what was provisioned and how the engine is configured*, kept for reuse on future media-table
 > cutovers.
 
@@ -125,4 +125,4 @@ container (`docker compose up -d trino`), not just `restart`.
 - Access Databricks tables from Apache Iceberg clients: https://learn.microsoft.com/en-us/azure/databricks/external-access/iceberg
 - Unity Catalog credential vending for external system access: https://docs.databricks.com/aws/en/external-access/credential-vending
 - Trino #23238 — Iceberg REST vended credentials for Azure (open): https://github.com/trinodb/trino/issues/23238
-- Full engine-side findings & options: `docs/uc_managed_iceberg_trino_write_capabilities.md`
+- Full engine-side findings & options: `docs/catalog/uc_managed_iceberg_trino_write_capabilities.md`
