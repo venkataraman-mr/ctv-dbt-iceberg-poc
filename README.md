@@ -8,12 +8,17 @@ Architecture source of truth: Google Drive → `CTV_occurrence_flow_architecture
 ```
 docker-compose.yml     stack: nessie · trino · dbt · ingestion
 infra/                 Dockerfiles + Trino/Nessie config
-ddl/nessie/                   Trino DDL for persistent tables (create-before-run) + README
-dbt/                   dbt project (bronze/reference sources, staging->raw + ref models, watermark macros)
-ingestion/             Python: reference sync (Option C) + CTV landing (PyIceberg)
-scripts/               vm_setup.md (staged setup) + smoke_test.sh + cron/ + upload_ctv_sample.ps1
+ddl/                   Trino + Postgres DDL, split by catalog: nessie/ (current) + polaris/ (PoC, empty) + postgres/{nessie,polaris}/ + README
+dbt/                   dbt project — targets the NESSIE (`iceberg`) catalog (bronze/reference sources, staging->raw + ref models, watermark macros)
+ingestion/             Python: reference sync (Option C) + CTV landing (PyIceberg) — writes to the NESSIE catalog
+scripts/               catalog/ (nessie|polaris|lakekeeper catalog-PoC tooling) + ops (smoke_test.sh, pg_connectivity_test.sh, cron/, upload_ctv_sample.ps1, vm_setup.md)
 docs/                  ctv_daily_runbook (end-to-end daily run) + infra runbook + per-piece docs + architecture pointer
 ```
+
+> **Catalog binding — important.** This `dbt/` project and every `dbt run` / `dbt build` here run against the
+> **Nessie** (`iceberg`) Trino catalog; `ingestion/` likewise writes to Nessie. The parallel **Polaris** PoC
+> pipeline will be a **separate cloned dbt project** (e.g. `dbt_polaris/`) targeting the `polaris` catalog. So
+> "run the dbt models" / any reference to `dbt/` = the **Nessie** pipeline, not Polaris.
 
 ## Prerequisites
 - **Docker + Docker Compose v2** on the VM — the only required host install (everything else is
