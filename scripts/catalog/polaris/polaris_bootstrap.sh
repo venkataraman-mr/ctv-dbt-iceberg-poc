@@ -49,7 +49,7 @@ curl -s -X PUT "$POLARIS/api/management/v1/principal-roles/trino_role/catalog-ro
   -H 'Content-Type: application/json' -d '{"catalogRole": {"name": "admin_role"}}' ; echo
 
 echo
-echo "DONE. Put the trino_poc client_id:client_secret (from step 3) into scripts/polaris.properties.staged"
+echo "DONE. Put the trino_poc client_id:client_secret (from step 3) into scripts/catalog/polaris/polaris.properties.staged"
 echo "(iceberg.rest-catalog.oauth2.credential), copy that file to infra/trino/catalog/polaris.properties,"
 echo "then: docker compose restart trino"
 echo

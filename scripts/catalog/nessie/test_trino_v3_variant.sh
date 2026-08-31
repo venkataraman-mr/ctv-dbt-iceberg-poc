@@ -10,7 +10,7 @@
 # cross-engine readable -- Nessie's REST catalog doesn't serve v3, and Databricks can't federate to
 # Nessie. Interpret results as "can Trino itself do v3+VARIANT", not "cross-cloud works".
 #
-# Usage:  bash scripts/test_trino_v3_variant.sh
+# Usage:  bash scripts/catalog/nessie/test_trino_v3_variant.sh
 # Each step prints a PASS/label and its output or error; failures don't stop the run (so you see the
 # whole matrix). Cleanup drops the scratch table at the end.
 

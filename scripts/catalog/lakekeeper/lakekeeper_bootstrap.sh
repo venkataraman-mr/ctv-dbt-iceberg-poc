@@ -47,6 +47,6 @@ curl -s -X POST "$LK/management/v1/warehouse" -H "Authorization: Bearer $TOKEN" 
 }' ; echo
 
 echo
-echo "DONE. Wire Trino: cp scripts/lakekeeper.properties.staged infra/trino/catalog/lakekeeper.properties"
+echo "DONE. Wire Trino: cp scripts/catalog/lakekeeper/lakekeeper.properties.staged infra/trino/catalog/lakekeeper.properties"
 echo "then: docker compose up -d trino   (recreate to load the new catalog)"
 echo "Verify: docker exec -i trino trino --execute \"SHOW CATALOGS\"   # expect 'lakekeeper'"

@@ -269,7 +269,7 @@ open).** Gravitino and the reference REST fixture are kept as comparison context
 | :-- | :-- | :-- | :-- |
 | 1 | **v3 CREATE** (R1) | `CREATE TABLE … WITH (format_version=3)`; check it's really v3 | not silently downgraded to v2 |
 | 2 | **VARIANT column** (R1) | table with a `variant` column; `INSERT CAST(JSON… AS VARIANT)`; read `payload['k']` | create + insert + read all succeed |
-| 3 | **Trino R/W** (R2) | run `scripts/test_trino_v3_variant.sql` against the catalog | all steps pass |
+| 3 | **Trino R/W** (R2) | run `scripts/catalog/nessie/test_trino_v3_variant.sql` against the catalog | all steps pass |
 | 4 | **Spark R/W** (R2) | Spark 4.x + Iceberg 1.11 → create/insert/read v3+VARIANT | round-trips |
 | 5 | **Databricks read** (R2) | manual non-UC Spark attach on **DBR 18** → read a v3+VARIANT table | rows return |
 | 6 | **Row-level DML** | UPDATE / DELETE / MERGE on a v3 table | succeed |

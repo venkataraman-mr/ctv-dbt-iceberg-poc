@@ -31,7 +31,7 @@
 AWS_VM_HOST   = "REPLACE_WITH_VM_PUBLIC_HOST_OR_IP"        # same host used for Nessie, but port 8181
 POLARIS_URI   = f"http://{AWS_VM_HOST}:8181/api/catalog"   # Polaris Iceberg REST endpoint
 WAREHOUSE     = "ctv_poc"                                  # the Polaris catalog created at bootstrap
-POLARIS_CRED  = "REPLACE_trino_poc_clientId:clientSecret"  # from scripts/polaris_bootstrap.sh step 3 (do NOT commit)
+POLARIS_CRED  = "REPLACE_trino_poc_clientId:clientSecret"  # from scripts/catalog/polaris/polaris_bootstrap.sh step 3 (do NOT commit)
 OAUTH_SCOPE   = "PRINCIPAL_ROLE:ALL"
 
 # S3 access: Polaris does NOT vend creds in this PoC, so Spark reads/writes S3 with its OWN keys.
@@ -189,13 +189,13 @@ print("v3 + VARIANT CRUD from Databricks: PASS")
 
 # MAGIC %md
 # MAGIC ## 6. Cross-engine interop (the real 'external read/write' proof)
-# MAGIC  * **A:** read a table that **Trino** created (run scripts/polaris_crossengine_verify.sql part 1 first).
+# MAGIC  * **A:** read a table that **Trino** created (run scripts/catalog/polaris/polaris_crossengine_verify.sql part 1 first).
 # MAGIC  * **B:** the `dbx_crud_v3` table above is now readable **by Trino** (part 2 of that SQL file).
 # MAGIC This shows the same Polaris tables are read/written by both engines — Trino AND Databricks.
 
 # COMMAND ----------
 
-# A: read the v3+VARIANT table that TRINO created (run scripts/polaris_crossengine_verify.sql part 1 first)
+# A: read the v3+VARIANT table that TRINO created (run scripts/catalog/polaris/polaris_crossengine_verify.sql part 1 first)
 try:
     spark.sql(f"""
     SELECT id, source, variant_get(payload, '$.advertiser', 'string') AS advertiser
@@ -213,7 +213,7 @@ xeng = f"{CATALOG}.{SCHEMA}.xeng_from_dbx"
 spark.sql(f"DROP TABLE IF EXISTS {xeng}")
 spark.sql(f"CREATE TABLE {xeng} (id BIGINT, source STRING, payload VARIANT) USING iceberg TBLPROPERTIES ('format-version'='3')")
 spark.sql(f"INSERT INTO {xeng} VALUES (1,'dbx',parse_json('{{\"advertiser\":\"FromDatabricks\",\"spend\":42}}'))")
-print("created", xeng, "- now run part 2 of scripts/polaris_crossengine_verify.sql in Trino to read it back")
+print("created", xeng, "- now run part 2 of scripts/catalog/polaris/polaris_crossengine_verify.sql in Trino to read it back")
 
 # COMMAND ----------
 

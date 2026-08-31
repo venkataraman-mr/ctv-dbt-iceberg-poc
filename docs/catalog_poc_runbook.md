@@ -29,14 +29,15 @@ external Trino R/W, and Databricks cross-cloud CRUD incl. v3+VARIANT. Nessie is 
 | File | Purpose |
 | :-- | :-- |
 | `docker-compose.yml` (main) | `catalog_postgres`, `polaris` (+ `polaris_bootstrap`), `lakekeeper` (+ `lakekeeper_migrate`) services |
-| `infra/catalog-poc/init-catalog-dbs.sql` | Creates the `lakekeeper` DB (Postgres init) |
-| `scripts/polaris_bootstrap.sh` | Creates the Polaris catalog + principal + RBAC grants |
-| `scripts/polaris.properties.staged` | Trino → Polaris catalog config (creds via `${ENV:POLARIS_OAUTH2_CREDENTIAL}`) |
-| `scripts/lakekeeper_bootstrap.sh` | Bootstraps Lakekeeper + creates the `ctv_lakekeeper` S3 warehouse |
-| `scripts/lakekeeper.properties.staged` | Trino → Lakekeeper catalog config |
-| `scripts/catalog_feature_tests.sql` | v3+VARIANT + DML + views tests (`<CATALOG>`/`<SCHEMA>` template) |
-| `scripts/catalog_feature_tests_polaris.sql` / `_lakekeeper.sql` | Pre-filled per-catalog test scripts (DBeaver) |
-| `scripts/polaris_crossengine_verify.sql` / `lakekeeper_crossengine_verify.sql` | Trino-side cross-engine round-trip with Databricks |
+| `scripts/catalog/polaris/init-catalog-dbs.sql` | Creates the `lakekeeper` DB (Postgres init) |
+| `scripts/catalog/polaris/polaris_bootstrap.sh` | Creates the Polaris catalog + principal + RBAC grants |
+| `scripts/catalog/polaris/polaris.properties.staged` | Trino → Polaris catalog config (creds via `${ENV:POLARIS_OAUTH2_CREDENTIAL}`) |
+| `scripts/catalog/lakekeeper/lakekeeper_bootstrap.sh` | Bootstraps Lakekeeper + creates the `ctv_lakekeeper` S3 warehouse |
+| `scripts/catalog/lakekeeper/lakekeeper.properties.staged` | Trino → Lakekeeper catalog config |
+| `scripts/catalog/catalog_feature_tests.sql` | v3+VARIANT + DML + views tests (`<CATALOG>`/`<SCHEMA>` template) |
+| `scripts/catalog/polaris/catalog_feature_tests_polaris.sql`, `scripts/catalog/lakekeeper/catalog_feature_tests_lakekeeper.sql` | Pre-filled per-catalog test scripts (DBeaver) |
+| `scripts/catalog/polaris/polaris_crossengine_verify.sql`, `scripts/catalog/lakekeeper/lakekeeper_crossengine_verify.sql` | Trino-side cross-engine round-trip with Databricks |
+| `scripts/catalog/nessie/test_trino_v3_variant.sql` / `.sh` | Trino v3+VARIANT capability test on the native Nessie (`iceberg`) catalog |
 | `../databricks/README_catalog_crosscloud.md` | Databricks cross-cloud runbook (Nessie/Polaris/Lakekeeper) + notebooks |
 
 ---
@@ -54,7 +55,7 @@ Trino is the **last** step and is just a config file — it is *not* "bootstrapp
    creds *available*; without the admin-tool run the first API call fails with
    `relation "polaris_schema.entities" does not exist`. The `polaris` server then starts (it `depends_on` the
    bootstrap completing). Idempotent in 1.7, so it's safe on every `up`. This is about **Polaris**, not Trino.
-3. **Catalog bootstrap** *(bootstrap sense #2 — `scripts/polaris_bootstrap.sh`)* — with the root creds, create a
+3. **Catalog bootstrap** *(bootstrap sense #2 — `scripts/catalog/polaris/polaris_bootstrap.sh`)* — with the root creds, create a
    **catalog `ctv_poc`** (→ `s3://…/polaris`), a **principal `trino_poc`**, and **roles/grants**. Output: the
    `trino_poc` **client_id:client_secret**. Still entirely inside Polaris.
 4. **Wire Trino (last)** — put those creds in `polaris.properties`, copy it into `infra/trino/catalog/`, restart
@@ -91,17 +92,17 @@ wiring needs the principal creds from step 3. The detailed commands for each are
    ```
 2. **Bootstrap** the catalog + a Trino principal + grants:
    ```bash
-   bash scripts/polaris_bootstrap.sh        # creates catalog `ctv_poc` -> s3://.../polaris, principal `trino_poc`
+   bash scripts/catalog/polaris/polaris_bootstrap.sh        # creates catalog `ctv_poc` -> s3://.../polaris, principal `trino_poc`
    ```
    Capture the `trino_poc` **client_id:client_secret** from step 3 of the script output.
-3. **Wire Trino:** put those creds into `scripts/polaris.properties.staged`
+3. **Wire Trino:** put those creds into `scripts/catalog/polaris/polaris.properties.staged`
    (`iceberg.rest-catalog.oauth2.credential=<id>:<secret>`), then activate it:
    ```bash
-   cp scripts/polaris.properties.staged infra/trino/catalog/polaris.properties
+   cp scripts/catalog/polaris/polaris.properties.staged infra/trino/catalog/polaris.properties
    docker compose up -d trino          # `up -d` (not `restart`) so the new POLARIS_OAUTH2_CREDENTIAL env loads
    docker exec -i trino trino --execute "SHOW CATALOGS"     # expect `polaris` in the list
    ```
-4. **Feature tests** (DBeaver on Trino): run `scripts/catalog_feature_tests.sql` with `<CATALOG>` = `polaris`,
+4. **Feature tests** (DBeaver on Trino): run `scripts/catalog/catalog_feature_tests.sql` with `<CATALOG>` = `polaris`,
    `<SCHEMA>` = `ctv_catalog_poc`. Record pass/fail per block in the matrix below.
 5. **RBAC test:** create a 2nd principal with a **read-only** catalog role (see the note at the end of
    `polaris_bootstrap.sh`); connect Trino as it; verify SELECT works but INSERT is denied.
@@ -144,21 +145,21 @@ role) — Lakekeeper then does S3 **remote signing** (the Polaris skip-subscopin
    continues to (re)create the warehouse.
    ```bash
    set -a; source .env; set +a
-   bash scripts/lakekeeper_bootstrap.sh    # bootstraps the server + creates warehouse `ctv_lakekeeper`
+   bash scripts/catalog/lakekeeper/lakekeeper_bootstrap.sh    # bootstraps the server + creates warehouse `ctv_lakekeeper`
    ```
    ⚠️ The script uses `LK_`-prefixed variables (`LK_WAREHOUSE`, `LK_BUCKET`, `LK_PREFIX`) precisely because a
    plain `WAREHOUSE` collides with Nessie's `WAREHOUSE` in `.env` — with the collision the warehouse gets named
    `s3://…/warehouse` instead of `ctv_lakekeeper`.
 3. **Wire Trino:**
    ```bash
-   cp scripts/lakekeeper.properties.staged infra/trino/catalog/lakekeeper.properties
+   cp scripts/catalog/lakekeeper/lakekeeper.properties.staged infra/trino/catalog/lakekeeper.properties
    docker compose up -d trino
    docker exec -i trino trino --execute "SHOW CATALOGS"     # expect `lakekeeper`
    ```
    Trino uses its **own S3 keys** here: Lakekeeper's warehouse (access-key + STS off) does S3 **remote signing**,
    which **Trino 483 does not consume** (it fails with `accessKey is null` if asked to). So `lakekeeper.properties`
    sets `fs.native-s3` + `s3.region` and does *not* enable vended credentials.
-4. **Feature tests:** run `scripts/catalog_feature_tests_lakekeeper.sql` (or the `<CATALOG>` template with
+4. **Feature tests:** run `scripts/catalog/lakekeeper/catalog_feature_tests_lakekeeper.sql` (or the `<CATALOG>` template with
    `lakekeeper` / `ctv_catalog_poc`) top-to-bottom in DBeaver. Record pass/fail per block in the matrix.
 5. **RBAC + cross-cloud:** Lakekeeper authz is OpenFGA/Cedar (soft req). Databricks cross-cloud CRUD incl.
    v3+VARIANT **passed** — see Part C and `../databricks/README_catalog_crosscloud.md`. Note the **BASE_URI**
@@ -184,8 +185,8 @@ Key points learned:
   it the executor S3 write fails "Unable to load region from any of the providers".
 - **Own S3 keys** (no vending), same as Trino. Auth: Polaris = OAuth2 `trino_poc` creds; Lakekeeper = static
   bearer `dummy` (unsecured) + BASE_URI = public.
-- Trino-side cross-engine verification: `scripts/polaris_crossengine_verify.sql` /
-  `scripts/lakekeeper_crossengine_verify.sql`.
+- Trino-side cross-engine verification: `scripts/catalog/polaris/polaris_crossengine_verify.sql` /
+  `scripts/catalog/lakekeeper/lakekeeper_crossengine_verify.sql`.
 
 **Standalone Spark (EMR/K8s) — not yet run.** Same REST config (`spark.sql.catalog.X.type=rest` at the catalog
 uri + warehouse) would create/read v3+VARIANT. Databricks already exercises the Spark/Iceberg path, so this is a

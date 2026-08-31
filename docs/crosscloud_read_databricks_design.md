@@ -16,7 +16,7 @@ networking/security prerequisites, and how it was tested.
 > **Status (validated 2026-08-26):** on the target **UC** cluster, a foreign Spark catalog can NOT be registered
 > (see §2); the working read path is **PyIceberg on the UC cluster** (validated). The `MERGE` logic in §3 is
 > unchanged from the original design. Test assets: `databricks/polaris_uc_cluster_read_test.py`,
-> `scripts/polaris_uc_read_seed.sql`, `databricks/README_catalog_crosscloud.md`.
+> `scripts/catalog/polaris/polaris_uc_read_seed.sql`, `databricks/README_catalog_crosscloud.md`.
 
 Related: `docs/ctv_productionization_crosscloud_design.md` (overall cross-cloud plan),
 `docs/iceberg_catalog_evaluation.md` (catalog decision), `docs/uc_managed_iceberg_trino_write_capabilities.md`
@@ -188,7 +188,7 @@ pattern the pipeline already uses for MERGE-written tables. This holds on **any*
 **Done — UC-cluster read (2026-08-26).** `databricks/polaris_uc_cluster_read_test.py` on a UC cluster confirmed:
 (a) the Spark foreign-catalog attach is rejected by UC (`NO_SUCH_CATALOG`), and (b) **PyIceberg reads the Polaris
 occurrence table** (v3, non-VARIANT columns) and computes the first/last-seen aggregation — Option A works.
-Seed: `scripts/polaris_uc_read_seed.sql`.
+Seed: `scripts/catalog/polaris/polaris_uc_read_seed.sql`.
 
 **Done — offline logic test** (`databricks/tests/test_crosscloud_read_logic.py`, plain PySpark): validates the
 transformation logic with mock tables — watermark selection, latest-per-creative, `delete_flag=false` filter, the

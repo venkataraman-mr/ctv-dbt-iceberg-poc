@@ -59,7 +59,7 @@ services:
       UC_AZURE_STORAGE_ACCOUNT_NAME: ${UC_AZURE_STORAGE_ACCOUNT_NAME:-}
       UC_AZURE_STORAGE_ACCOUNT_KEY: ${UC_AZURE_STORAGE_ACCOUNT_KEY:-}
       # Polaris principal creds for the catalog-PoC `polaris.properties` (reads ${ENV:POLARIS_OAUTH2_CREDENTIAL}).
-      # Format "clientId:clientSecret" of the trino_poc principal from scripts/polaris_bootstrap.sh. In .env
+      # Format "clientId:clientSecret" of the trino_poc principal from scripts/catalog/polaris/polaris_bootstrap.sh. In .env
       # (gitignored). Optional: only needed while the polaris catalog is wired.
       POLARIS_OAUTH2_CREDENTIAL: ${POLARIS_OAUTH2_CREDENTIAL:-}
       # Lakekeeper Iceberg REST URI for lakekeeper.properties (reads ${ENV:LAKEKEEPER_URI}). KEEP THIS INTERNAL
@@ -127,7 +127,7 @@ services:
       POSTGRES_DB: polaris                       # `lakekeeper` DB created by the init script
     volumes:
       - catalog_pg_data:/var/lib/postgresql/data # named volume on the VM's (EBS-backed) docker storage
-      - ./infra/catalog-poc/init-catalog-dbs.sql:/docker-entrypoint-initdb.d/init-catalog-dbs.sql:ro
+      - ./scripts/catalog/polaris/init-catalog-dbs.sql:/docker-entrypoint-initdb.d/init-catalog-dbs.sql:ro
     healthcheck:                                 # gate the bootstrap + Polaris on Postgres being ready
       test: ["CMD-SHELL", "pg_isready -U catalog -d polaris"]
       interval: 5s

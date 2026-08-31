@@ -42,7 +42,7 @@
 # MAGIC ```
 # MAGIC 5. Firewall: this cluster's egress must reach `AWS_VM_HOST:8181` (the rule we already opened).
 # MAGIC
-# MAGIC **Prereq:** run `scripts/polaris_uc_read_seed.sql` on Trino first to create
+# MAGIC **Prereq:** run `scripts/catalog/polaris/polaris_uc_read_seed.sql` on Trino first to create
 # MAGIC `polaris.ctv_catalog_poc.gold_occurrence_sample`.
 
 # COMMAND ----------

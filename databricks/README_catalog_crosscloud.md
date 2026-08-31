@@ -98,8 +98,8 @@ A `Connection timed out` from Databricks = the security group / network path, no
 | `v3_variant_write_test_crosscloud.py` | Nessie | v3+VARIANT write attempt (fails — see findings) |
 | `polaris_crosscloud_crud_test.py` | Polaris | Full CRUD incl. v3+VARIANT |
 | `lakekeeper_crosscloud_crud_test.py` | Lakekeeper | Full CRUD incl. v3+VARIANT |
-| `../scripts/polaris_crossengine_verify.sql` | Polaris | Trino-side cross-engine round-trip |
-| `../scripts/lakekeeper_crossengine_verify.sql` | Lakekeeper | Trino-side cross-engine round-trip |
+| `../scripts/catalog/polaris/polaris_crossengine_verify.sql` | Polaris | Trino-side cross-engine round-trip |
+| `../scripts/catalog/lakekeeper/lakekeeper_crossengine_verify.sql` | Lakekeeper | Trino-side cross-engine round-trip |
 
 ---
 
@@ -136,7 +136,7 @@ The v3+VARIANT attempt was run on DBR 18 with `4.0_2.13:1.11.0` libs.
 ## 2. Apache Polaris — **PASS (full CRUD incl. v3+VARIANT)**
 
 **Auth:** OAuth2 client-credentials using the `trino_poc` principal's `clientId:clientSecret` (from
-`scripts/polaris_bootstrap.sh`), scope `PRINCIPAL_ROLE:ALL`.
+`scripts/catalog/polaris/polaris_bootstrap.sh`), scope `PRINCIPAL_ROLE:ALL`.
 
 **Endpoint:** `http://<VM>:8181/api/catalog`, warehouse `ctv_poc`.
 
@@ -146,12 +146,12 @@ Production would instead give the catalog a `roleArn` and turn on real credentia
 
 **Run order:**
 
-1. `scripts/polaris_crossengine_verify.sql` **part 1** (DBeaver/Trino) — creates `xeng_from_trino` for the
+1. `scripts/catalog/polaris/polaris_crossengine_verify.sql` **part 1** (DBeaver/Trino) — creates `xeng_from_trino` for the
    notebook to read.
 2. Import `polaris_crosscloud_crud_test.py`, fill cell 0 (`AWS_VM_HOST`, the `trino_poc` creds, AWS keys), run
    top to bottom. (Cell 2 only *verifies* the catalog — registration is in the cluster Spark config above.)
-3. `scripts/polaris_crossengine_verify.sql` **part 2** — Trino reads `xeng_from_dbx` created by the notebook.
-4. `scripts/polaris_crossengine_verify.sql` **part 3** — cleanup.
+3. `scripts/catalog/polaris/polaris_crossengine_verify.sql` **part 2** — Trino reads `xeng_from_dbx` created by the notebook.
+4. `scripts/catalog/polaris/polaris_crossengine_verify.sql` **part 3** — cleanup.
 
 **Reading the result:**
 
@@ -189,10 +189,10 @@ SG allows only Databricks' source), so Trino would hang. Polaris avoids all of t
 
 **Run order:** same shape as Polaris —
 
-1. `scripts/lakekeeper_crossengine_verify.sql` **part 1** (Trino) — creates `xeng_lk_from_trino`.
+1. `scripts/catalog/lakekeeper/lakekeeper_crossengine_verify.sql` **part 1** (Trino) — creates `xeng_lk_from_trino`.
 2. Import `lakekeeper_crosscloud_crud_test.py`, fill cell 0 (`AWS_VM_HOST`, AWS keys — token is `dummy`), run
    top to bottom.
-3. `scripts/lakekeeper_crossengine_verify.sql` **part 2/3** — Trino reads `xeng_lk_from_dbx`, then cleanup.
+3. `scripts/catalog/lakekeeper/lakekeeper_crossengine_verify.sql` **part 2/3** — Trino reads `xeng_lk_from_dbx`, then cleanup.
 
 **Result:** all blocks pass — v3+VARIANT CRUD from Databricks and cross-engine round-trip both work once
 `BASE_URI` is the public URL.
