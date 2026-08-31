@@ -138,10 +138,56 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Plan B (UC-compatible): read Polaris via **PyIceberg**, not a Spark catalog
+# MAGIC Unity Catalog governs the Spark catalog namespace, so a custom `spark.sql.catalog` foreign REST catalog may
+# MAGIC not resolve on a UC cluster **regardless of access mode** (this is a UC constraint, not a Standard-vs-Dedicated
+# MAGIC one). PyIceberg sidesteps it entirely: it talks to Polaris REST **as a library**, returns Arrow/pandas, and we
+# MAGIC hand that to Spark for the `MERGE`. Works on Dedicated (and even Standard, via compute-scoped Python libs).
+
+# COMMAND ----------
+
+# MAGIC %pip install "pyiceberg[pyarrow]" boto3
+# MAGIC # dbutils.library.restartPython()   # run if the import below fails right after %pip
+
+# COMMAND ----------
+
+from pyiceberg.catalog.rest import RestCatalog
+
+cat = RestCatalog("polaris", **{
+    "uri": f"http://{AWS_VM_HOST}:8181/api/catalog",
+    "warehouse": "ctv_poc",
+    "credential": "REPLACE_trino_poc_clientId:clientSecret",   # do NOT commit
+    "scope": "PRINCIPAL_ROLE:ALL",
+    # own S3 keys (Polaris doesn't vend in the PoC)
+    "s3.access-key-id": "REPLACE_AWS_ACCESS_KEY_ID",
+    "s3.secret-access-key": "REPLACE_AWS_SECRET_ACCESS_KEY",
+    "s3.region": "us-east-2",
+})
+print("namespaces:", cat.list_namespaces())
+
+tbl = cat.load_table(("ctv_catalog_poc", "gold_occurrence_sample"))
+pdf = tbl.scan(
+    selected_fields=("occurrence_id", "creative_url_hash", "capture_timestamp", "updated_timestamp", "delete_flag")
+).to_pandas()
+print("rows read via PyIceberg:", len(pdf))
+
+sdf = spark.createDataFrame(pdf)
+sdf.createOrReplaceTempView("occ_pyiceberg")
+spark.sql("""
+SELECT creative_url_hash, MIN(capture_timestamp) AS first_seen, MAX(updated_timestamp) AS last_seen, COUNT(*) AS occ_count
+FROM occ_pyiceberg WHERE delete_flag = false GROUP BY creative_url_hash
+""").show(truncate=False)
+print("Polaris read via PyIceberg on a UC cluster: PASS — MERGE occ_pyiceberg into the UC creative table next")
+# NOTE: if load_table() errors on v3 metadata, PyIceberg's v3 read support is the gap — tell me and we fall back to
+# the two-task pattern (a non-UC task writes a projected UC table; this UC job MERGEs from it).
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Interpretation
-# MAGIC - Block 2 returns UC rows **and** block 3 returns Polaris rows in the same session → a **Dedicated UC cluster**
-# MAGIC   does the cross-cloud read with UC access intact. No non-UC cluster needed for the sync job.
-# MAGIC - Block 4/5 is the first/last-seen read the job actually needs; the `MERGE` into the UC creative table would
-# MAGIC   then run on this same cluster (write side — validated separately against a scratch UC table).
-# MAGIC - If block 3 fails with a Spark-config/permission error, the cluster is **Standard** mode, not **Dedicated** —
-# MAGIC   switch access mode (or use the two-task / PyIceberg fallback from `docs/crosscloud_read_databricks_design.md`).
+# MAGIC - **Blocks 2–5 (Spark catalog attach):** if block 3 reads Polaris, great — but UC clusters commonly reject a
+# MAGIC   custom `spark.sql.catalog` foreign catalog. That's the reported error to capture.
+# MAGIC - **Plan B (PyIceberg):** the reliable UC-cluster path — reads Polaris as a library (no Spark catalog), then
+# MAGIC   Spark `MERGE`s into the UC creative table on the same cluster. This is the likely production shape.
+# MAGIC - **Fallback if PyIceberg can't read v3:** two-task workflow — a non-UC task reads Polaris and writes a
+# MAGIC   projected UC table (ids + timestamps, no VARIANT); this UC job just `MERGE`s from that UC table.
