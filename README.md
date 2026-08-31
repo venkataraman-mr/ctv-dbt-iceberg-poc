@@ -8,7 +8,7 @@ Architecture source of truth: Google Drive → `CTV_occurrence_flow_architecture
 ```
 docker-compose.yml     stack: nessie · trino · dbt · ingestion
 infra/                 Dockerfiles + Trino/Nessie config
-ddl/                   Trino DDL for persistent tables (create-before-run) + README
+ddl/nessie/                   Trino DDL for persistent tables (create-before-run) + README
 dbt/                   dbt project (bronze/reference sources, staging->raw + ref models, watermark macros)
 ingestion/             Python: reference sync (Option C) + CTV landing (PyIceberg)
 scripts/               vm_setup.md (staged setup) + smoke_test.sh + cron/ + upload_ctv_sample.ps1
@@ -81,7 +81,7 @@ files), and a dbt-trino incremental model transforms staging → `bronze.digital
 watermark-driven via Trino `system.table_changes` (the Delta `table_changes` analog), so runs are
 incremental, not full scans. `creative_url_hash` is the exact Spark `xxhash64(seed 42)`, precomputed
 at landing (verified vs real PySpark). All timestamps are `timestamp(6) with time zone` (UTC), and
-persistent tables are pre-created by DDL (`ddl/`). Details in `docs/ctv_ingestion.md`.
+persistent tables are pre-created by DDL (`ddl/nessie/`). Details in `docs/ctv_ingestion.md`.
 
 *Views:* the **native** Nessie connector (`iceberg.catalog.type=nessie`) doesn't support Iceberg views,
 so dbt runs with `views_enabled: false` (incremental temp relations become tables) and a legacy Databricks
@@ -91,11 +91,11 @@ catalog** *does* support views — validated 2026-08-17 on Trino 483 via a scrat
 REST path is the productionization route if real views are needed.
 
 *Pieces 3–5 tables provisioned (2026-07-28):* all 20 persistent Iceberg tables are pre-created by DDL
-(`ddl/00`–`07`) — bronze staging/raw/creative, silver watermark + Piece 4/5, gold creative/occurrence/
+(`ddl/nessie/00`–`07`) — bronze staging/raw/creative, silver watermark + Piece 4/5, gold creative/occurrence/
 deployment — generated from the Databricks `table_ddl` notebooks (Spark→Trino types, IDENTITY/DEFAULT
 dropped, CLUSTER BY → partition/sort). dbt sources are wired for the UC reference dims, `spend`, and
 Postgres reads (`creatives.*`, `vx2_taxonomy.*` — provisional). Coverage was audited against the
-deep-dive; archiving is deliberately excluded (N/A for CTV). See `ddl/README.md`.
+deep-dive; archiving is deliberately excluded (N/A for CTV). See `ddl/nessie/README.md`.
 
 *Piece 3 — creative push, Job A (2026-08-04):* new CTV creatives push end-to-end from
 `bronze.digital_raw_occurrence` into Postgres, **Trino/dbt-native (no Python)**. Five dbt models
@@ -107,7 +107,7 @@ cross-catalog CTAS, `CALL` the cloned insert proc (`postgres.system.execute`), a
 watermark last. `creative_id` comes from a Postgres sequence reserved as a `[start,end]` block (replaces
 the Universal Creative API). All Postgres objects are `tempwork.*_ctv_poc` **clones** (real `creatives.*`
 untouched). Validated on the VM: **26,592** creatives staged. Details + build learnings in
-`docs/ctv_creative_push.md`; clone objects in `ddl/postgres/piece3_tempwork_ctv_poc.sql`.
+`docs/ctv_creative_push.md`; clone objects in `ddl/postgres/nessie/piece3_tempwork_ctv_poc.sql`.
 
 *Piece 3 — Job B (2026-08-05):* two independent **version-watermarked** sub-pipelines, run together and
 concurrency-safe. First-seen update (`crtv_firstseen`) `CALL`s the cloned update proc to pull each
@@ -120,7 +120,7 @@ collides under Iceberg optimistic concurrency, which Trino won't retry). Details
 `docs/ctv_creative_push.md`.
 
 *Piece 4 — seeding prerequisite (2026-08-05):* before the sync-back can run against clones, production
-creative data must be copied into them. `ddl/postgres/piece4_seed_tempwork_ctv_poc.sql` clones the rest of
+creative data must be copied into them. `ddl/postgres/nessie/piece4_seed_tempwork_ctv_poc.sql` clones the rest of
 the creative table family the sync-back proc reads (`creative`, `creative_product`/`celebrity`/`competitor`,
 `creative_dedupe_map`, `creative_classification_engine_holding`, `creative_ai_classification_staging_vx0`,
 `component_coding` (task-4 component sync), plus a `watermark_control` clone) and adds a **two-mode Postgres seeding proc**

@@ -29,13 +29,13 @@ gate (5) can classify occurrences against `gold.creative`. Run the steps in this
 Do this once when standing up the stack (after `docs/runbook.md` §0–2). Skip on daily runs.
 
 **1a. Iceberg tables + watermark seeds (Trino).** Creates every persistent table and seeds the Piece-1 /
-Piece-3 version watermarks (ddl/03), the Piece-4 timestamp watermarks (ddl/08), and the Piece-5 watermarks
-(ddl/09). `ddl/03` also partitions `silver.watermark_control` by `watermark_name` (concurrency).
+Piece-3 version watermarks (ddl/nessie/03), the Piece-4 timestamp watermarks (ddl/nessie/08), and the Piece-5 watermarks
+(ddl/nessie/09). `ddl/nessie/03` also partitions `silver.watermark_control` by `watermark_name` (concurrency).
 
 ```bash
-for f in ddl/0[0-7]_*.sql; do echo "== $f =="; docker exec -i trino trino --catalog iceberg -f /dev/stdin < "$f"; done
-docker exec -i trino trino --catalog iceberg -f /dev/stdin < ddl/08_silver_watermark_control_piece4.sql
-docker exec -i trino trino --catalog iceberg -f /dev/stdin < ddl/09_silver_watermark_control_piece5.sql
+for f in ddl/nessie/0[0-7]_*.sql; do echo "== $f =="; docker exec -i trino trino --catalog iceberg -f /dev/stdin < "$f"; done
+docker exec -i trino trino --catalog iceberg -f /dev/stdin < ddl/nessie/08_silver_watermark_control_piece4.sql
+docker exec -i trino trino --catalog iceberg -f /dev/stdin < ddl/nessie/09_silver_watermark_control_piece5.sql
 # gold columns the sync writes (metadata-only add on already-created tables):
 docker exec -i trino trino --execute "ALTER TABLE iceberg.gold.creative_first_seen ADD COLUMN provider_campaign_landing_page VARCHAR"
 docker exec -i trino trino --execute "ALTER TABLE iceberg.gold.creative ADD COLUMN first_seen_provider_campaign_landing_page VARCHAR"
@@ -49,10 +49,10 @@ docker exec -i trino trino --execute "UPDATE iceberg.silver.watermark_control SE
 **clones** — real `creatives.*` are untouched.
 
 ```sql
-\i ddl/postgres/piece3_tempwork_ctv_poc.sql      -- Piece 3 clones + insert/first-seen/occ-summary procs + creative_id sequence
-\i ddl/postgres/piece4_seed_tempwork_ctv_poc.sql -- Piece 4 read-side clones + the two-mode seeding proc
-\i ddl/postgres/piece4_sync_procs_ctv_poc.sql    -- the two cloned/retargeted get_changes procs
-\i ddl/postgres/piece5_occ_id_seq_ctv_poc.sql    -- occurrence_id sequence (START 75,000,000,000) + block table + reserve proc
+\i ddl/postgres/nessie/piece3_tempwork_ctv_poc.sql      -- Piece 3 clones + insert/first-seen/occ-summary procs + creative_id sequence
+\i ddl/postgres/nessie/piece4_seed_tempwork_ctv_poc.sql -- Piece 4 read-side clones + the two-mode seeding proc
+\i ddl/postgres/nessie/piece4_sync_procs_ctv_poc.sql    -- the two cloned/retargeted get_changes procs
+\i ddl/postgres/nessie/piece5_occ_id_seq_ctv_poc.sql    -- occurrence_id sequence (START 75,000,000,000) + block table + reserve proc
 ```
 
 **1c. Reference sync — UC env + schedule (once).** The UC sync needs the `UC_*` keys in `.env`, then a

@@ -15,7 +15,7 @@ of that family and **seeds them from production**, so Piece 4 has realistic inpu
 through ML — we copy what production already resolved. Real `creatives.*` / `ml_results.*` are only ever
 **read**; every write lands in `tempwork`.
 
-Deliverable: `ddl/postgres/piece4_seed_tempwork_ctv_poc.sql` (clone DDL + the seeding proc). Run once on
+Deliverable: `ddl/postgres/nessie/piece4_seed_tempwork_ctv_poc.sql` (clone DDL + the seeding proc). Run once on
 prod Postgres via a SQL client (DBeaver — `psql` isn't on the VM). Idempotent.
 
 ## The production creative lifecycle (what we're modelling)
@@ -157,7 +157,7 @@ Requires membership in `tempwork_admin_role` (same as the Piece 3 clones).
 
 ```sql
 -- 1) once: create the clones + watermark clone + seeding procs (idempotent)
-\i ddl/postgres/piece4_seed_tempwork_ctv_poc.sql
+\i ddl/postgres/nessie/piece4_seed_tempwork_ctv_poc.sql
 
 -- 2) seed — adhoc / manual (later scheduled once daily ingestion starts)
 CALL tempwork.sp_seed_creative_clones_ctv_poc('ALL');       -- Mode 1 (new) then Mode 2 (updates); default

@@ -14,7 +14,7 @@
        (Not-Hold + '2-IntermediateStaging' -> DELETE); park new holds (Hold + '1-RawOccurrence' -> INSERT).
     3. watermark_version_finish('DIGITAL_RAW_OCC_TO_GOLD_OCC') -- promote the pinned end snapshot AFTER the gold write.
 
-  PREREQ: ddl/postgres/piece5_occ_id_seq_ctv_poc.sql (the 75B sequence + reservation proc).
+  PREREQ: ddl/postgres/nessie/piece5_occ_id_seq_ctv_poc.sql (the 75B sequence + reservation proc).
 #}
 
 -- depends_on: {{ ref('digital_occ_classified') }}

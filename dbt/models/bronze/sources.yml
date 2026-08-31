@@ -7,7 +7,7 @@ sources:
     database: iceberg
     schema: bronze
     tables:
-      # Piece 3 creative-push maintains these two bronze tables (created by ddl/04). Job A reads
+      # Piece 3 creative-push maintains these two bronze tables (created by ddl/nessie/04). Job A reads
       # them (anti-joins) and writes creative_unique_urls; creative_autochaff stays empty for CTV
       # (legacy autochaff scoring only runs for provider_code='BIS'; CTV is 'AVOD BISCTV').
       - name: creative_unique_urls                  # url->creative_id registry + is_staged flag

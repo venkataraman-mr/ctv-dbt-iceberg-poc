@@ -4,7 +4,7 @@
   150-stage limit (CTEs referenced many times get their subtree re-planned each time) and its per-node memory
   (hashing the huge productmap). Here productmap is only ever a STREAMED filter scan (pm_cdf), never hashed.
 
-  Watermark CTV_PRODUCT_RESYNC (change_dt). MUST be initialized to max(change_dt), not 1900 -- see ddl/08.
+  Watermark CTV_PRODUCT_RESYNC (change_dt). MUST be initialized to max(change_dt), not 1900 -- see ddl/nessie/08.
   Affected = gold.creative (created >= floor, not in translation hold) whose primary_product_id is in the
   changed set, OR whose secondary product array intersects the changed set (set_id = 0). Keeps prior vx1/vx2
   values + an is_secondary_touched flag for the final affected filter downstream.

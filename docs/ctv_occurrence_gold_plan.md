@@ -70,7 +70,7 @@ Sequencing (per §8.7 + confirmed): **Half A first, then Half B.**
 Hold RELEASE is handled by Half A (it unions the buffer each run and releases Not-Hold '2-IntermediateStaging');
 Half B only UPDATES existing gold rows.
 
-## 4. Watermark inventory (ddl/09)
+## 4. Watermark inventory (ddl/nessie/09)
 
 | Watermark | Kind | Source | Half |
 |---|---|---|---|
@@ -153,8 +153,8 @@ Writes: `gold.digital_gold_occurrence`, `gold.digital_deployment_chain{,_role,_m
 
 ```
 # once: seed the two occurrence watermarks + the 75B occurrence_id sequence/proc (Postgres, via SQL client)
-docker exec -i trino trino --catalog iceberg -f /dev/stdin < ddl/09_silver_watermark_control_piece5.sql
-#   \i ddl/postgres/piece5_occ_id_seq_ctv_poc.sql   (on Postgres; needs tempwork_admin_role)
+docker exec -i trino trino --catalog iceberg -f /dev/stdin < ddl/nessie/09_silver_watermark_control_piece5.sql
+#   \i ddl/postgres/nessie/piece5_occ_id_seq_ctv_poc.sql   (on Postgres; needs tempwork_admin_role)
 
 # FULL JOB (all 6 in DAG order + scratch cleanup):
 docker compose run --rm dbt dbt run --select tag:DIGITAL_RAW_OCC_TO_GOLD_OCC

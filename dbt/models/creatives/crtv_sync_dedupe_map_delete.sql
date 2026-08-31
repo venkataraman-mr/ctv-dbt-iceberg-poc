@@ -9,7 +9,7 @@
   NO lag/buffer (dedup, `> start`). child_creative_id in silver is the reserved clone id, matching
   creative_ctv_poc.creative_id.
 
-  Prereq (once): seed CTV_SYNC_DEDUP_DELETE (ddl/08).
+  Prereq (once): seed CTV_SYNC_DEDUP_DELETE (ddl/nessie/08).
 #}
 
 -- depends_on: {{ ref('crtv_sync_dedupe_map') }}

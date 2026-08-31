@@ -17,11 +17,11 @@ row per occurrence id, keeps only the video / `video/mp4` / whitelisted-publishe
 the canonical 42-column occurrence to `iceberg.bronze.digital_raw_occurrence`. Downstream pieces
 `ref()` the raw table, not a source.
 
-Both persistent tables are **pre-created by DDL** (`ddl/01_*.sql`, `ddl/02_*.sql`) before the
+Both persistent tables are **pre-created by DDL** (`ddl/nessie/01_*.sql`, `ddl/nessie/02_*.sql`) before the
 pipeline runs — the pipeline only appends. The landing step loads (never creates) the staging table
 and fails fast with a pointer to the DDL if it is missing; the dbt model appends into the
 pre-created raw table (its `config` partitioning/sort matches the DDL, so a `--full-refresh`
-recreates it identically). See `ddl/README.md`.
+recreates it identically). See `ddl/nessie/README.md`.
 
 ## Source is S3 (not the Azure queue)
 
@@ -77,7 +77,7 @@ The model reproduces `StagingToRawOccurrenceBisCtvUS` in Trino SQL:
   scan. The first run (watermark NULL) is the one exception: `table_changes` needs a start snapshot,
   so it does a one-time full read of the current snapshot, then records the watermark. The two-phase
   `current_commit_version` pin makes advancing the watermark crash-safe. Seed the watermark row
-  (`last_commit_version = NULL`) before the first run — see `ddl/03`.
+  (`last_commit_version = NULL`) before the first run — see `ddl/nessie/03`.
 - **Parse** each `json_data` with `json_parse` / `json_extract_scalar`, mapping to the same 42
   canonical columns and types as the legacy DDL (`provider_code = 'AVOD BISCTV'`, `capture_month =
   yyyymm`, `creative_duration = duration/1000`, `daisy_chain = unifiedChain` JSON, etc.).
@@ -102,7 +102,7 @@ assumes the **Trino session time zone is UTC** so `captureDate` parses to UTC as
 docker compose build ingestion && docker compose up -d
 
 # 2. create the persistent table structures ONCE (schemas + staging + raw + watermark_control)
-for f in ddl/00_schemas.sql ddl/01_*.sql ddl/02_*.sql ddl/03_*.sql; do
+for f in ddl/nessie/00_schemas.sql ddl/nessie/01_*.sql ddl/nessie/02_*.sql ddl/nessie/03_*.sql; do
   echo "== $f =="; docker exec -i trino trino -f /dev/stdin < "$f"; done
 
 # 3. copy sample .bz2 files to the ingestion prefix (from a machine with AWS creds)

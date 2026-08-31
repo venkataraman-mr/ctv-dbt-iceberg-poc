@@ -8,7 +8,7 @@
                   builds tempwork.component_coding_forsync_tmp_ctv_poc.
   Body: 1-row summary of the forsync. Transforms + writes are stages 2-4 (comp_sync_*), which depend on this.
 
-  Prereqs: ddl/postgres/piece4_sync_procs_ctv_poc.sql (component proc clone); CTV_SYNC_COMPONENT seeded (ddl/08).
+  Prereqs: ddl/postgres/nessie/piece4_sync_procs_ctv_poc.sql (component proc clone); CTV_SYNC_COMPONENT seeded (ddl/nessie/08).
   NOTE: component coding is a print/mattress concern -- expect the CTV forsync to be near-empty.
 #}
 

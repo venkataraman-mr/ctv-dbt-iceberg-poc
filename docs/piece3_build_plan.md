@@ -174,7 +174,7 @@ adclarity_url). `occurrence_description` and `occurrence_link_url` are NULL for 
 `created_timestamp` are `timestamp(6) with time zone` (UTC).
 
 ## Files to create (build task #4)
-- `ddl/postgres/piece3_tempwork_ctv_poc.sql` — CREATE SCHEMA IF NOT EXISTS tempwork; 2 clone tables
+- `ddl/postgres/nessie/piece3_tempwork_ctv_poc.sql` — CREATE SCHEMA IF NOT EXISTS tempwork; 2 clone tables
   (no triggers); 2 clone procs (retargeted); sequence START 26000000000. **User runs once on PG.**
 - `dbt/macros/` — `crtv_reserve_ids` (sequence block via `system.query`); reuse/extend watermark
   macros (add timestamp begin/finish variants if not present); a `pg_execute(call_sql)` helper wrapping
@@ -182,7 +182,7 @@ adclarity_url). `occurrence_description` and `occurrence_link_url` are NULL for 
 - Job A models: e.g. `dbt/models/creatives/crtv_staging_candidate.sql` (+ new-ids + final + pg-temp
   model), terminal model carrying the ordered post-hooks (steps 5–9).
 - Job B models: e.g. `dbt/models/creatives/crtv_firstseen_candidate.sql` (+ pg-temp + terminal hooks).
-- `ddl/03` watermark seed rows: `DIGITAL_RAW_OCC_TO_CRTV_STAGING` (version) +
+- `ddl/nessie/03` watermark seed rows: `DIGITAL_RAW_OCC_TO_CRTV_STAGING` (version) +
   `DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE` (timestamp).
 - Schedules: `scripts/cron/` — Job A */20min, Job B hourly.
 - Docs: `docs/ctv_creative_push.md` (Piece 3); update README + `docs/ctv_dbt_iceberg_poc.md` +

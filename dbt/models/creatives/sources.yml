@@ -31,7 +31,7 @@ sources:
 
   # Piece 4 sync-back READS the seeded tempwork *_ctv_poc CLONES (not real creatives.*), via the
   # Trino postgresql catalog. The *_forsync_tmp_* / *_hold_* / crtv_sync_* scratch are created at run
-  # time by the cloned procs (ddl/postgres/piece4_sync_procs_ctv_poc.sql); declared here so models can
+  # time by the cloned procs (ddl/postgres/nessie/piece4_sync_procs_ctv_poc.sql); declared here so models can
   # source() them. Writes back (CE-hold / advert-hold pushback) go via postgres.system.execute, not these.
   - name: tempwork
     database: postgres          # Trino catalog name (not Iceberg)

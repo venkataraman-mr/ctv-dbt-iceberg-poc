@@ -135,17 +135,17 @@ also gets a DDL structure + a dbt source) once identified.
 End-to-end on the VM: S3 `.bz2`/plain-JSON → bronze staging (PyIceberg landing) → dbt-trino
 staging->raw incremental (`bronze.digital_raw_occurrence`). Incremental reads via Trino
 `system.table_changes` driven by the version watermark. `creative_url_hash` = exact Spark
-`xxhash64(seed 42)` precomputed at landing. Persistent tables pre-created by DDL (`ddl/`). Full
-detail, run steps, and design notes: **`docs/ctv_ingestion.md`**; table structures: **`ddl/README.md`**.
+`xxhash64(seed 42)` precomputed at landing. Persistent tables pre-created by DDL (`ddl/nessie/`). Full
+detail, run steps, and design notes: **`docs/ctv_ingestion.md`**; table structures: **`ddl/nessie/README.md`**.
 
 ## 4c. Pieces 3–5 tables provisioned (2026-07-28)
-All 20 persistent Iceberg tables pre-created by DDL (`ddl/00`–`07`): bronze staging/raw + creative (5),
+All 20 persistent Iceberg tables pre-created by DDL (`ddl/nessie/00`–`07`): bronze staging/raw + creative (5),
 silver watermark + Piece 4/5 (7), gold creative/occurrence/deployment (8). Scripts `04`–`07` were
 generated from the Databricks `table_ddl` notebooks (Spark→Trino types; IDENTITY/DEFAULT dropped —
 `occurrence_id`/`creative_id` come from Postgres sequences; CLUSTER BY → partition(`capture_month`) +
 `sorted_by`). dbt sources wired for the UC `reference`/`spend` dims and Postgres reads (`creatives.*`,
 `vx2_taxonomy.*` — provisional). Coverage audited vs the deep-dive; archiving excluded (N/A for CTV).
-Run/verify: see **`ddl/README.md`**.
+Run/verify: see **`ddl/nessie/README.md`**.
 
 ## 4d. Piece 3 — creative push, Job A — VALIDATED (2026-08-04)
 New CTV creatives push end-to-end from `bronze.digital_raw_occurrence` into Postgres, **Trino/dbt-native
@@ -159,8 +159,8 @@ untouched. Full detail + build learnings: **`docs/ctv_creative_push.md`**.
 
 Setup (once): run the Postgres clone bootstrap, then seed the Job A watermark row:
 ```bash
-# Postgres (psql): ddl/postgres/piece3_tempwork_ctv_poc.sql  (idempotent; clones + procs + sequence + block table)
-# Trino: seed DIGITAL_RAW_OCC_TO_CRTV_STAGING (ddl/03 — version watermark, last_commit_version NULL)
+# Postgres (psql): ddl/postgres/nessie/piece3_tempwork_ctv_poc.sql  (idempotent; clones + procs + sequence + block table)
+# Trino: seed DIGITAL_RAW_OCC_TO_CRTV_STAGING (ddl/nessie/03 — version watermark, last_commit_version NULL)
 docker exec -i trino trino --execute "INSERT INTO iceberg.silver.watermark_control (watermark_name, start_timestamp, end_timestamp, last_commit_version, current_commit_version, transaction_status, created_timestamp, updated_timestamp) VALUES ('DIGITAL_RAW_OCC_TO_CRTV_STAGING', NULL, NULL, NULL, NULL, 'SUCCEEDED', current_timestamp, current_timestamp)"
 ```
 Run / verify:
@@ -184,14 +184,14 @@ aggregate → `CALL` the upsert proc, then a park/release `MERGE` back into the 
 
 Setup (once):
 ```bash
-# Postgres (PG client — psql is NOT on the VM): re-run ddl/postgres/piece3_tempwork_ctv_poc.sql
+# Postgres (PG client — psql is NOT on the VM): re-run ddl/postgres/nessie/piece3_tempwork_ctv_poc.sql
 #   (adds creative_occurrence_summary_ctv_poc + its upsert proc). Requires membership in tempwork_admin_role:
 #   GRANT tempwork_admin_role TO <login>;   (a DBA event trigger reassigns new tempwork tables to that role)
 # Trino: add the buffer column, seed the two Job B version watermarks, and partition watermark_control:
 docker exec -i trino trino --execute "ALTER TABLE iceberg.bronze.missing_digital_occurrence_for_summary ADD COLUMN capture_timestamp TIMESTAMP(6) WITH TIME ZONE"
 docker exec -i trino trino --execute "INSERT INTO iceberg.silver.watermark_control (watermark_name,start_timestamp,end_timestamp,last_commit_version,current_commit_version,transaction_status,created_timestamp,updated_timestamp) VALUES ('DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE',NULL,NULL,NULL,NULL,'SUCCEEDED',current_timestamp,current_timestamp)"
 docker exec -i trino trino --execute "INSERT INTO iceberg.silver.watermark_control (watermark_name,start_timestamp,end_timestamp,last_commit_version,current_commit_version,transaction_status,created_timestamp,updated_timestamp) VALUES ('DIGITAL_RAW_OCC_SUMMARY_PSQL',NULL,NULL,NULL,NULL,'SUCCEEDED',current_timestamp,current_timestamp)"
-# partition watermark_control by watermark_name (recreate preserving rows — see ddl/03 comment):
+# partition watermark_control by watermark_name (recreate preserving rows — see ddl/nessie/03 comment):
 docker exec -i trino trino <<'SQL'
 CREATE TABLE iceberg.silver.watermark_control_bak AS SELECT * FROM iceberg.silver.watermark_control;
 DROP TABLE iceberg.silver.watermark_control;
@@ -226,7 +226,7 @@ Setup (once, on prod Postgres via a SQL client — `psql` is NOT on the VM; requ
 -- creates the 8 new clones (creative, creative_product/celebrity/competitor, creative_dedupe_map,
 -- creative_classification_engine_holding, creative_ai_classification_staging_vx0, component_coding),
 -- the watermark_control clone (2 seed marks), and the seeding procs. Idempotent.
-\i ddl/postgres/piece4_seed_tempwork_ctv_poc.sql
+\i ddl/postgres/nessie/piece4_seed_tempwork_ctv_poc.sql
 ```
 Run (adhoc / manual — later scheduled once daily ingestion starts):
 ```sql
@@ -257,9 +257,9 @@ UTC, **no lag** (`> start`); idempotent MERGEs. Full plan + per-task map + all l
 Setup (once):
 ```bash
 # Postgres (SQL client; needs tempwork_admin_role): clone the two get_changes procs (retargeted to tempwork)
-\i ddl/postgres/piece4_sync_procs_ctv_poc.sql
+\i ddl/postgres/nessie/piece4_sync_procs_ctv_poc.sql
 # Trino: seed the 10 Piece-4 timestamp watermarks + add the two gold columns the sync writes
-docker exec -i trino trino --catalog iceberg -f /dev/stdin < ddl/08_silver_watermark_control_piece4.sql
+docker exec -i trino trino --catalog iceberg -f /dev/stdin < ddl/nessie/08_silver_watermark_control_piece4.sql
 docker exec -i trino trino --execute "ALTER TABLE iceberg.gold.creative_first_seen ADD COLUMN provider_campaign_landing_page VARCHAR"
 docker exec -i trino trino --execute "ALTER TABLE iceberg.gold.creative ADD COLUMN first_seen_provider_campaign_landing_page VARCHAR"
 # Product-resync watermark must NOT start at 1900 (else full-productmap sweep -> OOM); init to max(change_dt):
@@ -302,9 +302,9 @@ two watermarks. This is the **last piece** — the CTV occurrence flow now runs 
 Setup (once):
 ```bash
 # Postgres (SQL client; needs tempwork_admin_role): the 75-billion occurrence_id sequence + block table + reserve proc
-\i ddl/postgres/piece5_occ_id_seq_ctv_poc.sql
+\i ddl/postgres/nessie/piece5_occ_id_seq_ctv_poc.sql
 # Trino: seed the 2 Piece-5 watermarks (DIGITAL_RAW_OCC_TO_GOLD_OCC version + DIGITAL_CRTV_CHANGES_TO_GOLD_OCC timestamp)
-docker exec -i trino trino --catalog iceberg -f /dev/stdin < ddl/09_silver_watermark_control_piece5.sql
+docker exec -i trino trino --catalog iceberg -f /dev/stdin < ddl/nessie/09_silver_watermark_control_piece5.sql
 ```
 Run the FULL job (Half A then Half B, in DAG order; leaves parallelize with ≥2 threads):
 ```bash

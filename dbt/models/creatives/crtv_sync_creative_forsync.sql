@@ -10,7 +10,7 @@
   Body: a 1-row summary of the forsync (row count + max updated_timestamp) to confirm the proc ran. The
   transforms + gold MERGE are stages 2-3 (crtv_sync_creative*), which depend on this model so the proc runs first.
 
-  Prereqs (once): ddl/postgres/piece4_sync_procs_ctv_poc.sql (proc clones); CTV_SYNC_CREATIVE seeded (ddl/08).
+  Prereqs (once): ddl/postgres/nessie/piece4_sync_procs_ctv_poc.sql (proc clones); CTV_SYNC_CREATIVE seeded (ddl/nessie/08).
   VALIDATE ON VM: the advert-hold CTAS + the cross-catalog CALL succeed and forsync populates.
 #}
 

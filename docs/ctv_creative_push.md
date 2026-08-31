@@ -110,7 +110,7 @@ into `tempwork.creative_id_block_ctv_poc`. `reserve_creative_ids(n)` calls it vi
 (writable), then reads the newest block row via `system.query` (read-only) — two calls, because Trino
 can't both write and return in one. The block table is the API's response log (one row per run).
 
-## Postgres side (clone objects — `ddl/postgres/piece3_tempwork_ctv_poc.sql`, run once)
+## Postgres side (clone objects — `ddl/postgres/nessie/piece3_tempwork_ctv_poc.sql`, run once)
 
 Everything lives in the `tempwork` schema with a `_ctv_poc` suffix so the PoC never touches the real
 `creatives.*` tables/procs. Clones start **empty** (no prod seed); **no triggers** (we only prove
@@ -126,13 +126,13 @@ by the dbt run, not here.
 Job A uses the **version** watermark (like Piece 1): begin pins `digital_raw_occurrence`'s end snapshot
 in `current_commit_version` (`InProgress`); the final model's post-hook promotes it to
 `last_commit_version` (`SUCCEEDED`) after the push. Seed row `DIGITAL_RAW_OCC_TO_CRTV_STAGING` in
-`ddl/03` (Job B's `DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE` timestamp seed is there too).
+`ddl/nessie/03` (Job B's `DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE` timestamp seed is there too).
 
 ## Run & verify
 
 ```bash
-# once, on Postgres: run ddl/postgres/piece3_tempwork_ctv_poc.sql
-# once, on Trino: seed the Job A watermark row (ddl/03 DIGITAL_RAW_OCC_TO_CRTV_STAGING)
+# once, on Postgres: run ddl/postgres/nessie/piece3_tempwork_ctv_poc.sql
+# once, on Trino: seed the Job A watermark row (ddl/nessie/03 DIGITAL_RAW_OCC_TO_CRTV_STAGING)
 docker compose run --rm dbt dbt run --select +crtv_staging_final          # by model
 docker compose run --rm dbt dbt run --select tag:RAW_OCCS_TO_CREATIVE_STAGING          # by job tag (same models, whole job)
 # verify
@@ -179,9 +179,9 @@ media and anti-joined against `creative_autochaff`. Final = the aggregate (rows 
 Iceberg `MERGE` with `DELETE` (works on Nessie; fall back to `DELETE`+`INSERT` if it regresses).
 
 New objects: PG clone `tempwork.creative_occurrence_summary_ctv_poc` + `sp_dbx_digital_upsert_to_crtv_occ_summary_ctv_poc`
-(`ddl/postgres/piece3_tempwork_ctv_poc.sql`); `capture_timestamp` added to `bronze.missing_digital_occurrence_for_summary`
-(ddl/04, Databricks MRVXVC-11059); watermark seeds `DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE` +
-`DIGITAL_RAW_OCC_SUMMARY_PSQL` (ddl/03). Both jobs tagged `CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY`; the generalized `on-run-end` cleanup
+(`ddl/postgres/nessie/piece3_tempwork_ctv_poc.sql`); `capture_timestamp` added to `bronze.missing_digital_occurrence_for_summary`
+(ddl/nessie/04, Databricks MRVXVC-11059); watermark seeds `DIGITAL_RAW_OCC_TO_CRTV_FIRST_SEEN_UPDATE` +
+`DIGITAL_RAW_OCC_SUMMARY_PSQL` (ddl/nessie/03). Both jobs tagged `CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY`; the generalized `on-run-end` cleanup
 drops the `CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY` scratch after a clean run.
 
 Run (parallel is safe after the watermark-table partitioning fix below):
@@ -198,7 +198,7 @@ Job B's two sub-pipelines (and, on schedule, Job A vs Job B) write `silver.water
 concurrently. As one tiny **unpartitioned** table it was a single data file, so any two concurrent
 writers rewrote the same file → `ICEBERG_COMMIT_ERROR "Found conflicting files"`. This is a
 serializable-isolation row-conflict that Trino does **not** retry — `max_commit_retry` didn't help (the
-run failed in ~1s, no retry). Fix: **partition `watermark_control` by `watermark_name`** (ddl/03), so
+run failed in ~1s, no retry). Fix: **partition `watermark_control` by `watermark_name`** (ddl/nessie/03), so
 each process's row is its own partition = its own file; different processes rewrite different files and
 Iceberg's conflict check prunes non-matching partitions. Now Job B runs at full `threads=4` cleanly, and
 any concurrent mix of watermarked jobs is safe. `max_commit_retry=20` kept as a cheap safety margin.

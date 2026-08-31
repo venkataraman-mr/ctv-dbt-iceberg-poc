@@ -17,7 +17,7 @@
   Types are cast to the gold schema (media_id is VARCHAR in gold; ids sized; naive Postgres timestamps
   -> timestamp(6) with time zone, session TZ = UTC).
 
-  Prereqs (once, on the VM): seed CTV_SYNC_FIRST_SEEN (ddl/08) and
+  Prereqs (once, on the VM): seed CTV_SYNC_FIRST_SEEN (ddl/nessie/08) and
     ALTER TABLE iceberg.gold.creative_first_seen ADD COLUMN provider_campaign_landing_page VARCHAR;
 #}
 

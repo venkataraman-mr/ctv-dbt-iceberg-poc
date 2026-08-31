@@ -3,7 +3,7 @@
 -- Run once (idempotent: only inserts names that don't already exist). All are timestamp-based
 -- (MERGE-written / Postgres sources, per docs/ctv_creative_sync_plan.md §2/§5). end_timestamp seeded
 -- to 1900-01-01 UTC so the first run reads the full history; reads apply a 1-min UTC safety lag.
--- watermark_control is partitioned by watermark_name (ddl/03) -> each process's row is isolated.
+-- watermark_control is partitioned by watermark_name (ddl/nessie/03) -> each process's row is isolated.
 -- =====================================================================================
 
 INSERT INTO iceberg.silver.watermark_control

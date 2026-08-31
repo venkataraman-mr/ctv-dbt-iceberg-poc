@@ -15,7 +15,7 @@
   post_hook (which can't see the model body's runtime values) with no "source advanced mid-run"
   re-read window.
 
-  Seed one row per process before first use (see ddl/03_silver_watermark_control.sql).
+  Seed one row per process before first use (see ddl/nessie/03_silver_watermark_control.sql).
 
   Piece 1 (digital_raw_occurrence) uses the VERSION pair with Trino's system.table_changes to read
   only new staging inserts each run. The TIMESTAMP pair is for the MERGE-written sources later.

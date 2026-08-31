@@ -8,7 +8,7 @@
   The one exception is the very first run (watermark NULL): table_changes needs a start snapshot, so
   we read the full current snapshot once, then record the watermark; every run after is incremental.
   The watermark row 'BIS_CTV_US_INGESTION_STG_TO_RAW_OCC' must be seeded in watermark_control first
-  (ddl/03), with last_commit_version = NULL for the initial full load.
+  (ddl/nessie/03), with last_commit_version = NULL for the initial full load.
 
   Fidelity notes (mirrors legacy exactly except where noted):
     - creative_url_hash is NOT recomputed here — it is the precomputed exact Spark xxhash64(seed 42)

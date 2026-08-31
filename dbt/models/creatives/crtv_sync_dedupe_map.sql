@@ -11,7 +11,7 @@
   Types cast to the silver target (ids BIGINT; scores REAL; json_response VARCHAR; naive Postgres
   timestamps -> timestamp(6) with time zone). Delete pass (removed children) is crtv_sync_dedupe_map_delete.
 
-  Prereq (once): seed CTV_SYNC_DEDUP_UPSERT (ddl/08).
+  Prereq (once): seed CTV_SYNC_DEDUP_UPSERT (ddl/nessie/08).
 #}
 
 {%- set wm_name = 'CTV_SYNC_DEDUP_UPSERT' -%}

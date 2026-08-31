@@ -1,7 +1,7 @@
 -- =====================================================================================
 -- Piece 4 sync-back — CLONED stored procs (run ONCE on prod Postgres via a SQL client).
 -- Bodies are VERBATIM from prod, retargeted to the tempwork *_ctv_poc clones (created by
--- ddl/postgres/piece3_* and piece4_seed_*). jobwork.* scratch -> tempwork *_ctv_poc; reference.*/
+-- ddl/postgres/nessie/piece3_* and piece4_seed_*). jobwork.* scratch -> tempwork *_ctv_poc; reference.*/
 -- config.*/"template".* left as prod READS. Real creatives.*/ml_results.* are NOT read here.
 --
 -- Outputs the dbt/Trino sync reads:

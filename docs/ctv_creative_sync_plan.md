@@ -124,7 +124,7 @@ the `*_advert_hold_tmp`/`*_hold_creative_tmp` inputs are runtime scratch (create
 
 ## 8. Build order + validation status (all BUILT)
 
-1. **Proc clones** (creative + component) — **BUILT & VALIDATED** (`ddl/postgres/piece4_sync_procs_ctv_poc.sql`), pglast-parse-clean; run once on Postgres.
+1. **Proc clones** (creative + component) — **BUILT & VALIDATED** (`ddl/postgres/nessie/piece4_sync_procs_ctv_poc.sql`), pglast-parse-clean; run once on Postgres.
 2. **Task 2 (first-seen)** — **VALIDATED** (`crtv_sync_first_seen.sql`: MERGE → `gold.creative_first_seen`, watermark advanced; **no lag** — see §12). Model: `crtv_sync_first_seen`.
 3. **Task 3 (dedup)** — **VALIDATED** (`crtv_sync_dedupe_map` upsert + `crtv_sync_dedupe_map_delete` delete pass; `match_type` from Iceberg `reference.creative_match_type`; `json_format(json_response)`; **no lag**, `> start`).
 4. **Task 1 (creative)** — **VALIDATED** (`crtv_sync_creative_forsync` → `_raw` → `_revxlate` → `crtv_sync_creative`): reverse-translation vx1/vx2 match prod; 69 adverts held (expected); both hold loops; 107-col gold MERGE; change log; watermark read (stage-1 proc call) → advance (stage-3, non-held max). Full reprocess (33,407) **and** incremental re-run both confirmed.
@@ -166,7 +166,7 @@ candidate into the gold target and advance the watermark → the candidate is dr
 - **Type casts to the gold schema matter** (e.g. `gold.creative_first_seen.media_id` is VARCHAR; ids sized;
   naive Postgres timestamps → `timestamp(6) with time zone`). Reconcile each gold target's columns before
   writing its MERGE — this surfaced the missing `provider_campaign_landing_page` column on
-  `gold.creative_first_seen` (added to ddl/06 + ALTER on the VM).
+  `gold.creative_first_seen` (added to ddl/nessie/06 + ALTER on the VM).
 - **Provider filter** kept faithful: `provider_id in (2,11,13,16,18)` via var `p4_first_seen_provider_ids`.
 
 Each step: dbt models + any watermark seed rows, run on the VM, verify counts/keys, then commit (commands
@@ -210,7 +210,7 @@ of which apply to every remaining sync task:
   `keywords`, …) are preserved on match; `updated_timestamp := current_timestamp` (MRVXVC-14938);
   `first_seen_occurrence_id` keeps the existing value when incoming is null; `mr_secondary_company_ids` = null.
   Reconcile-before-MERGE surfaced a second missing gold column — `first_seen_provider_campaign_landing_page`
-  on `gold.creative` (added to ddl/06 + ALTER on the VM), the same class of gap as first-seen's.
+  on `gold.creative` (added to ddl/nessie/06 + ALTER on the VM), the same class of gap as first-seen's.
 - **69 adverts held is expected, not a bug.** Only `classification_type='Advert'` rows whose product didn't
   reverse-translate are held; ~1,071 creatives have a null vx1 but the non-advert ones flow through. Held
   rows are parked in `silver.creative_mapping_translation_hold`, kept out of gold this run, and re-read next
@@ -240,7 +240,7 @@ of which apply to every remaining sync task:
   hashes the small side. Same pattern used for `d_product` in the component task.
 - **Product-resync watermark must start at `max(change_dt)`, not 1900.** A fresh deploy has no resync backlog
   (task 1 already translated everything against the current productmap), and `change_dt >= 1900` would select the
-  ENTIRE productmap → memory blow-up. One-time init in ddl/08.
+  ENTIRE productmap → memory blow-up. One-time init in ddl/nessie/08.
 - **`json_object` vs `map` for building JSON objects.** To emit a JSON *object* (named keys) that array-aggregates
   cleanly, build each element as `cast(map(array[keys], array[values]) as json)` (component vx2 rebuild). Trino
   can't cast a timestamp to json (change-log), and `json_parse(x)` inside `json_object` yields json-typed values
@@ -258,7 +258,7 @@ of which apply to every remaining sync task:
 ```
 docker compose run --rm dbt dbt run --select tag:SYNC_CREATIVES_TO_ICEBERG
 ```
-Prereqs: `CTV_PRODUCT_RESYNC` initialized to `max(change_dt)` (ddl/08 one-time UPDATE); the two Postgres proc
+Prereqs: `CTV_PRODUCT_RESYNC` initialized to `max(change_dt)` (ddl/nessie/08 one-time UPDATE); the two Postgres proc
 clones + the tempwork seed already applied.
 
 **Single task** — chained tasks must run their whole chain (the scratch is dropped each run); single-model tasks

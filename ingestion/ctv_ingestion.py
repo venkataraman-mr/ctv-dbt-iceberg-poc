@@ -18,7 +18,7 @@ text (VARIANT -> string), plus `record_index` (global within the file), `source_
 `blob_name`, `created_timestamp`. The dedup / video-mp4 / publisher-whitelist / anti-join logic
 stays in the dbt-trino staging->raw model. Bronze staging is APPEND-ONLY.
 
-The staging table is **pre-created by DDL** (`ddl/01_bronze_digtial_raw_occurrence_ctv_staging.sql`)
+The staging table is **pre-created by DDL** (`ddl/nessie/01_bronze_digtial_raw_occurrence_ctv_staging.sql`)
 — this step only appends; it does not create the table. Run the DDL once before first ingest.
 """
 import bz2
@@ -43,7 +43,7 @@ STAGING_IDENTIFIER = "bronze.digtial_raw_occurrence_ctv_staging"  # legacy missp
 BATCH_ROWS = int(os.environ.get("CTV_LANDING_BATCH_ROWS", "50000"))
 _READ_CHUNK = 8 << 20  # 8 MiB reads from S3
 
-# Arrow schema appended to staging; must match ddl/01 (json_data VARIANT->string, record_index,
+# Arrow schema appended to staging; must match ddl/nessie/01 (json_data VARIANT->string, record_index,
 # source_filename, blob_name, created_timestamp tz-aware UTC = Iceberg timestamptz, creative_url_hash).
 _ARROW_SCHEMA = pa.schema([
     ("json_data", pa.string()),
@@ -170,8 +170,8 @@ def _load_staging_table():
     except NoSuchTableError:
         raise SystemExit(
             f"Table iceberg.{STAGING_IDENTIFIER} does not exist. Create it first:\n"
-            f"  trino -f ddl/01_bronze_digtial_raw_occurrence_ctv_staging.sql\n"
-            f"(see ddl/README.md for the full run order)."
+            f"  trino -f ddl/nessie/01_bronze_digtial_raw_occurrence_ctv_staging.sql\n"
+            f"(see ddl/nessie/README.md for the full run order)."
         )
 
 

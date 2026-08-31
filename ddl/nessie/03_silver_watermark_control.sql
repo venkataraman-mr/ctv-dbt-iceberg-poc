@@ -22,7 +22,7 @@
 -- process's row is its own partition = its own data file, so different processes rewrite different
 -- files and Iceberg's conflict check prunes non-matching partitions. max_commit_retry=20 stays as
 -- belt-and-suspenders (e.g. same-partition edge cases). On an already-created table this needs a
--- recreate (partition spec can't be retrofitted onto existing files) — see ddl/README / the runbook.
+-- recreate (partition spec can't be retrofitted onto existing files) — see ddl/nessie/README / the runbook.
 CREATE TABLE IF NOT EXISTS iceberg.silver.watermark_control (
     watermark_name          VARCHAR,
     start_timestamp         TIMESTAMP(6) WITH TIME ZONE,
