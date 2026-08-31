@@ -54,22 +54,25 @@ tables. This is the business hard requirement driving the whole migration.
   `attribute_response`(+`_vx2`), `secondary_products` (+`vx1_`/`vx2_`), `mr_secondary_company_ids`,
   `attribution_competitor`(+`_vx2`), `attribution_celebrity`, `custom_attributes`, `print_matching_ads`,
   `print_ad_images`, `json_response` (fingerprint dedupe), `json_log`.
-- **Reference sync:** the `reference.*` DDL has **no** VARIANT columns, **but** the **`spend.*`** tables synced
-  alongside it (`uc_reference_sync`) have **`source_json VARIANT`** — so the reference/spend sync must preserve
-  VARIANT there. The shared engine currently coerces **VARIANT→string + binary→base64**; that normalization must
-  be **OFF** for the Polaris reference/spend sync.
+- **Reference sync — no VARIANT (sorted).** Verified against both sync `TABLE_MAP`s and the `table_ddl`: the
+  UC-synced tables (`reference.creative_match_type` / `global_market` / `provider_global_market_map` / `media`, the
+  two `spend.digital_dmi_prelim_spend_average_by_*`, and the `tempwork.*` spend QC tables) and the hive-synced
+  `reference.*` dims have **no** VARIANT columns. The `source_json VARIANT` in `spend.py` belongs to
+  `spend.tv_rates_availability` / `tv_rates_raw` — **TV rates tables, out of scope and NOT in either sync map**.
+  (And `hive_metastore` Delta can't hold VARIANT anyway.) So reference/spend sync needs **no** VARIANT handling —
+  it can keep the existing shared-engine behavior unchanged.
 
 *(Line numbers for every VARIANT decl are in the `table_ddl` files above — use them to map exact per-table
 schemas when writing `ddl/polaris/`.)*
 
-**The key technical risk — VARIANT on the WRITE path.** Trino 483 / dbt write VARIANT natively
-(`CAST(JSON… AS VARIANT)`), but the **ingestion + reference-sync writers use PyIceberg**, whose VARIANT-write
-support is nascent. Decide the write strategy per path and **validate it early** (make-or-break for "ingestion +
-reference sync preserve VARIANT"):
-- **dbt transforms (Trino):** write VARIANT natively — fine.
-- **PyIceberg landing / reference sync:** either (a) land the JSON as **string**, then `CAST` to `variant` in the
-  first dbt model (VARIANT materializes in Iceberg via Trino, PyIceberg stays simple); or (b) move those writes to
-  **Spark/Trino** (both support VARIANT); or (c) verify the installed PyIceberg version can write VARIANT.
+**The key technical risk — VARIANT on the WRITE path (occurrence only).** The VARIANT that ingestion actually
+lands is on **`bronze.digital_raw_occurrence`** (`json_data`, `raw_json`, `daisy_chain`, `provider_raw_json`, …).
+Trino 483 / dbt write VARIANT natively (`CAST(JSON… AS VARIANT)`), but the **PyIceberg landing writer does not** —
+**no released PyIceberg writes VARIANT** (confirmed; V3 `VariantType` still open). **Chosen path:** ingestion lands
+those columns as **string/JSON text** (PyIceberg handles today), then the **first dbt model `CAST`s to `variant`**
+(materializes in Iceberg via Trino). Creative VARIANT columns are produced *in dbt* (Pieces 3/4), so they write
+VARIANT natively. **Reference/spend sync needs none of this** (no VARIANT — see above). Validate the occurrence
+land-as-string → CAST round-trip **early** on one table.
 
 Because of this, **v3 + VARIANT is the target end-state, not a deferred Phase 2** — Phase 1 below (VARCHAR parity)
 is only an *optional diagnostic* to isolate catalog mechanics; the deliverable is source-type parity.
@@ -116,6 +119,38 @@ parity diff gets muddy. Shared S3 bucket is safe (different prefixes). Watermark
 
 ---
 
+## 2a. Container topology (Docker)
+
+Two **new** compose services, added alongside the existing ones — the Nessie `dbt` and `ingestion` services (and
+their images) are **never touched**. The two pieces bind to the catalog differently, so they're handled
+differently.
+
+| Service | Image | Mounts | Catalog binding | Reuse Nessie image? |
+| :-- | :-- | :-- | :-- | :-- |
+| `dbt_polaris` | **reuse** `infra/Dockerfile.dbt` | `./dbt_polaris` | dbt→**Trino** only; profile `database: polaris` | **Yes** — same image |
+| `ingestion_polaris` | **reuse** `infra/Dockerfile.ingestion` | `./ingestion_polaris` | direct **Polaris REST** (OAuth2 + `ctv_poc` warehouse) | **Yes** — same image |
+
+**dbt → reuse the image.** dbt never talks to the catalog; Trino does. The `dbt_polaris` service is the same
+`Dockerfile.dbt` with `./dbt_polaris` mounted and a profile pointing `database: polaris`. No image change, no new
+libraries — the only difference from Nessie is which Trino catalog the profile names.
+
+**ingestion → same image, separate container (decided).** Ingestion writes to the catalog **REST endpoint
+directly** (PyIceberg), not through Trino. But because the VARIANT it lands is handled by **land-as-string → `CAST`
+in dbt** (no PyIceberg VARIANT write needed — §8), `ingestion_polaris` needs **no new libraries** — its
+`requirements.txt` is unchanged from Nessie. So it **reuses `Dockerfile.ingestion`** as a **separate compose
+service** with `./ingestion_polaris` mounted and Polaris env (OAuth2 REST + `ctv_poc` warehouse). The Nessie
+`ingestion` service is untouched, and the two run side-by-side.
+
+> **Fallback:** if a future write path *does* force a library change (e.g. a Spark-based VARIANT writer), split off
+> `infra/Dockerfile.ingestion.polaris` + a separate `requirements.txt` then — cheap to do later, and the runbook
+> already anticipates it. Not needed for the land-as-string plan.
+
+> **Images vs services.** "Separate container" = separate compose *service* (own name, own mount, own env), reusing
+> the Nessie *image* for both dbt and ingestion. Purely additive — `docker compose up` for the Nessie stack is
+> unchanged.
+
+---
+
 ## 3. Prerequisites (verify before starting)
 
 1. **Polaris is up and wired in Trino** (catalog PoC done): `docker exec -i trino trino --execute "SHOW CATALOGS"`
@@ -136,19 +171,22 @@ parity diff gets muddy. Shared S3 bucket is safe (different prefixes). Watermark
 1. **`dbt_polaris/`** — copy `dbt/` and change the profile catalog to `polaris`:
    ```bash
    cp -r dbt dbt_polaris
-   # in dbt_polaris/profiles.yml: catalog: polaris   (was iceberg)
-   # add a dbt/ingestion service or reuse the dbt container with DBT_PROJECT_DIR=/dbt_polaris (see §7)
+   # in dbt_polaris/profiles.yml: database: polaris   (was iceberg)
    ```
+   Add a **`dbt_polaris` compose service reusing `infra/Dockerfile.dbt`** with `./dbt_polaris` mounted (§2a, §7).
    Keep schema names (`bronze`/`silver`/`gold`) — they don't collide across catalogs. `sources.yml` `database:`
    entries flip from `iceberg` to `polaris`.
-2. **`ingestion_polaris/`** — copy `ingestion/` and point the catalog at Polaris REST:
+2. **`ingestion_polaris/`** — copy `ingestion/` and point the catalog at Polaris REST (same image, new service):
    ```bash
    cp -r ingestion ingestion_polaris
    ```
-   In `ingestion_polaris/common/catalog.py`: use the **Polaris REST** endpoint (`uri
-   http://polaris:8181/api/catalog`, `warehouse ctv_poc`, OAuth2 `credential`/`scope`, own S3 keys via
-   `fs`/`S3FileIO`) instead of Nessie's `/iceberg/`. Reference sync (`reference_sync.py` hive,
-   `uc_reference_sync.py` UC) and CTV landing (`ctv_ingestion.py`) all just change the catalog they write to.
+   Add an **`ingestion_polaris` compose service reusing `infra/Dockerfile.ingestion`**, mounting `./ingestion_polaris`
+   with Polaris env (§2a) — **no image or `requirements.txt` change** (VARIANT is handled as land-as-string → CAST
+   in dbt, so PyIceberg needs nothing new). In `ingestion_polaris/common/catalog.py`: use the **Polaris REST**
+   endpoint (`uri http://polaris:8181/api/catalog`, `warehouse ctv_poc`, OAuth2 `credential`/`scope`, own S3 keys via
+   `fs`/`S3FileIO`) instead of Nessie's `/iceberg/`. `ctv_ingestion.py` lands `bronze.digital_raw_occurrence`
+   VARIANT columns as **string**; `reference_sync.py` (hive) and `uc_reference_sync.py` (UC) just change the catalog
+   they write to (no VARIANT in those — §0). **Don't touch the Nessie `ingestion/` files** — the clone keeps it frozen.
 3. **`ddl/polaris/`** — **regenerate from the source Databricks table DDL (§0), NOT from `ddl/nessie/`** (which
    encodes the VARCHAR workaround). Target: **v3** (`WITH (format_version = 3)`) with real **`variant`** columns
    matching the source (§0 inventory), Spark→Trino mapped (STRING→VARCHAR, **keep `variant`**, INT→INTEGER,
@@ -217,11 +255,19 @@ Two options for the dbt container:
 
 ## 8. Gotchas to watch (from the catalog PoC)
 
-- **PyIceberg VARIANT writes (ingestion + reference sync) — the §0 make-or-break.** PyIceberg's VARIANT-write
-  support is nascent; the low-risk fallback is land-as-string → `CAST` to `variant` in the first dbt model.
-  Validate the chosen write path **before** building all pieces.
-- **Reference-sync normalization must be OFF.** The shared engine coerces VARIANT→string + binary→base64; disable
-  that for the Polaris reference sync so source data types are preserved (§0).
+- **PyIceberg VARIANT writes (ingestion + reference sync) — the §0 make-or-break.** ⚠️ **Confirmed (Aug 2026):
+  no released PyIceberg supports VARIANT writes** — `VariantType` is still open under the V3 tracking issue
+  ([#1819](https://github.com/apache/iceberg-python/issues/1819)), pending PyArrow/Parquet support; 0.11.0 (Feb
+  2026) shipped ORC read + REST improvements, no VARIANT. So **bumping PyIceberg won't fix this — no version has
+  it.** The write path is therefore **land VARIANT columns as string/JSON via PyIceberg (works today) → `CAST(... AS
+  variant)` in the first dbt model** (Trino 483 + dbt *can* write VARIANT). Consequence: `ingestion_polaris` keeps
+  the **same libraries and image** as Nessie (it writes strings, same as now) and the VARIANT materialization lives
+  in dbt/Trino. This applies **only to `bronze.digital_raw_occurrence`** (the VARIANT ingestion lands); creative
+  VARIANT is produced in dbt directly. Validate the occurrence round-trip **before** building all pieces.
+- **Reference/spend sync — no VARIANT, nothing to change.** Verified against both sync `TABLE_MAP`s (§0): none of
+  the synced `reference.*` / `spend.digital_dmi_prelim_*` / `tempwork.*` tables use VARIANT (the `source_json
+  VARIANT` in `spend.py` is on out-of-scope `tv_rates_*`, not synced; hive Delta can't hold VARIANT anyway). Leave
+  the shared-engine reference sync behavior **as-is**.
 - **MERGE / UPDATE / DELETE on v3 tables (Pieces 4 & 5).** These pieces lean on `MERGE` heavily and Trino's v3 is
   still "experimental" — validate row-level DML on v3 Polaris tables **early** (it passed in the feature test, but
   confirm at pipeline scale). Note VARIANT columns sit alongside the MERGE keys — confirm MERGE works on v3+VARIANT
@@ -250,11 +296,12 @@ The clone is a **temporary** migration artifact. Once Polaris passes Phase 1 + P
 ---
 
 ## 10. Open decisions (fill during the build)
-- **VARIANT write path (§0) — decide first:** land-as-string→CAST-in-dbt vs Spark/Trino writers vs PyIceberg
-  VARIANT support. Gates the ingestion + reference-sync design.
-- **Confirm the full VARIANT inventory + exact source types against the deployed table_ddl** (§0 lists what the
-  Databricks *code* shows; the table_ddl / `Digital_Flow_DeepDive.md` is authoritative — connect it to fold in).
-- dbt clone: reuse the `dbt` container vs a dedicated `dbt_polaris` service (§7).
-- Phase-1 scope: full 20-table reference sync + all 5 pieces, or a representative subset first for speed.
+- ~~**VARIANT write path**~~ **DECIDED:** occurrence VARIANT lands as **string** → `CAST` to `variant` in the
+  first dbt model (no released PyIceberg writes VARIANT). Reference/spend sync = no VARIANT. Creative VARIANT is
+  produced in dbt. Still to do: **validate the occurrence land-as-string → CAST round-trip on one table first.**
+- ~~**Container split**~~ **DECIDED (§2a):** `dbt_polaris` and `ingestion_polaris` are separate compose services
+  that **reuse the Nessie images** (no `requirements.txt` change). Split off a separate ingestion image only if a
+  future write path forces a library change.
+- Phase-1 scope: all 5 pieces at once, or a representative subset first for speed.
 - Postgres: dedicated sequences vs an offset block for the Polaris run's ids.
-- Whether to also stand up `ingestion_polaris` reference sync for **all** 20 tables or just the ones the pieces read.
+- Whether to stand up `ingestion_polaris` reference sync for **all** synced tables or just the ones the pieces read.

@@ -26,7 +26,10 @@ only substantive change is **v3 + VARIANT** (data-type parity). See
 
 > ⚠️ **Stale guidance inside these docs.** `Digital_Flow_DeepDive.md` (and `claude.md` §7) predates the
 > catalog decision and says *"VARIANT → map to string/JSON for the migration."* That was the **Nessie-era
-> workaround** (Nessie doesn't serve v3). **Superseded:** Polaris was chosen specifically to keep VARIANT,
-> so VARIANT is preserved end-to-end (pipeline **and** spend/reference sync). Ignore the map-to-string note.
+> workaround** (Nessie doesn't serve v3). **Superseded:** Polaris was chosen specifically to keep VARIANT.
+> Where VARIANT is preserved: the **occurrence pipeline** (`bronze.digital_raw_occurrence` + creative tables).
+> The **reference/spend sync has no VARIANT** (the synced tables carry none; `spend.tv_rates_*` are out of
+> scope), so it's unaffected. Ingestion lands occurrence VARIANT as string → dbt `CAST`s to `variant` (no
+> released PyIceberg writes VARIANT). Ignore the blanket map-to-string note.
 
 _Source: Drive project folder `1UK1t-JYEPEZu41ZcVZD7gK9szvzZ2kye`. Read-only snapshot — the Drive copies remain the living originals._
