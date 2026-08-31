@@ -46,9 +46,18 @@ tables. This is the business hard requirement driving the whole migration.
 > **superseded**: Polaris was chosen *because* it serves v3+VARIANT. Keep VARIANT as VARIANT; ignore the
 > map-to-string note wherever it appears in the deep-dive.
 
-**VARIANT columns to preserve — confirmed from the authoritative `table_ddl`:**
-- **Occurrence (bronze/gold/silver/archive):** `json_data` (CTV staging), `daisy_chain`, `raw_json`,
-  `provider_raw_json`, `live_events_tag`, `gpt_response`.
+**Governing rule — the Databricks `table_ddl` is the source of truth for *every* column type.** For each Polaris
+table, match the source column type exactly (STRING→VARCHAR, INT→INTEGER, BIGINT→BIGINT, SMALLINT→SMALLINT,
+DATE→DATE, TIMESTAMP→`timestamp(6) with time zone`, BOOLEAN→BOOLEAN, **VARIANT→`variant`**). Never deviate from
+source; if it's VARIANT in Databricks it's `variant` in Polaris. VARIANT columns are **table-specific** — check the
+actual `CREATE TABLE`, don't carry a column onto a table that doesn't have it.
+
+**VARIANT columns to preserve — confirmed per table from the authoritative `table_ddl`:**
+- **`bronze.digital_raw_occurrence` (CTV bronze):** exactly **two** — `daisy_chain`, `raw_json`. *(No `json_data` on
+  this table — that's the whole-object text blob in the staging table `digtial_raw_occurrence_ctv_staging`, which
+  stays VARCHAR.)* `ddl/polaris/02` = the Nessie DDL with these two flipped VARCHAR→`variant` + `format_version=3`.
+- **Other occurrence tables (silver staging / gold / non-CTV digital):** may add `json_data`, `provider_raw_json`,
+  `live_events_tag`, `gpt_response` — **verify against each table's own `CREATE TABLE`** before adding.
 - **Creative (bronze `creative_unique_urls` / `gold.creative` / silver):** `creative_payload`,
   `creative_machine_learning_payload` (a.k.a. `machine_learning_payload`), `first_seen_metadata`,
   `attribute_response`(+`_vx2`), `secondary_products` (+`vx1_`/`vx2_`), `mr_secondary_company_ids`,
@@ -74,27 +83,33 @@ those columns as **string/JSON text** (PyIceberg handles today), then the **firs
 VARIANT natively. **Reference/spend sync needs none of this** (no VARIANT — see above). Validate the occurrence
 land-as-string → CAST round-trip **early** on one table.
 
-Because of this, **v3 + VARIANT is the target end-state, not a deferred Phase 2** — Phase 1 below (VARCHAR parity)
-is only an *optional diagnostic* to isolate catalog mechanics; the deliverable is source-type parity.
+Because of this, **v3 + VARIANT is the target from the first table** — there is no VARCHAR-first phase. A
+v2/VARCHAR copy is only an *optional per-table diagnostic* to isolate catalog mechanics (§5); the deliverable is
+source-type parity.
 
 ---
 
-## 1. Approach — parallel, side-by-side, two phases
+## 1. Approach — reuse Nessie code, add v3+VARIANT, build in daily-runbook order
+
+**The motto.** *Reuse the code we already wrote for Nessie; verify each table against the current Databricks
+`table_ddl`; bring in `variant` + `format_version=3` for every table we create. Do **not** change the dbt logic we
+already validated — the only edits are the VARIANT pieces (table types + the `CAST`s that produce them).*
 
 - **Parallel clone.** New folders `dbt_polaris/`, `ingestion_polaris/`, `ddl/polaris/`, `ddl/postgres/polaris/`,
   all targeting the **`polaris`** Trino catalog. Nessie's `dbt/`, `ingestion/`, `ddl/nessie/`,
   `ddl/postgres/nessie/` stay as-is.
-- **Side-by-side.** Both catalogs are live in one Trino (`iceberg` = Nessie, `polaris` = Polaris). Run each piece
-  on Polaris, then compare against the Nessie run.
-- **Two phases — do NOT combine:**
-  - **Phase 1 — catalog swap (same schema).** Keep today's v2 tables and the `VARIANT → VARCHAR/JSON` workaround.
-    Goal: prove every piece **runs on Polaris and matches Nessie**. Isolates catalog issues from schema changes.
-  - **Phase 2 — v3 + VARIANT to full source parity (the requirement; see §0).** Tables are **v3** with real
-    **`variant`** columns **matching the source Databricks schema** (§0 inventory); the VARCHAR workaround is
-    retired. Comparison shifts to "does VARIANT round-trip and match the source UC values." **Per §0, this is the
-    real target** — Phase 1 is just an optional catalog-mechanics smoke test.
+- **Side-by-side.** Both catalogs live in one Trino (`iceberg` = Nessie, `polaris` = Polaris). Run each step on
+  Polaris, then compare against the Nessie run (row counts, id ranges, watermarks) and — for VARIANT columns —
+  against the **source UC** values.
+- **Single pass, v3+VARIANT from the start.** No VARCHAR-first phase. Each table is created **v3** with real
+  `variant` columns wherever the source `table_ddl` has VARIANT (§0). *(A VARCHAR/v2 copy is available only as an
+  optional one-table diagnostic if catalog mechanics ever need isolating — see the note at §5's end.)*
+- **Build in the Nessie daily-runbook order** (§5) — the same dependency order operators already run:
+  reference sync → ingestion → creative push/first-seen → seed → sync-back → gold occurrence.
 
-Cloning is what makes Phase 2 easy: `dbt_polaris/` models can adopt VARIANT without touching the Nessie baseline.
+What changes vs. Nessie, per table: (1) the `ddl/polaris/*` table is v3 + `variant` (not VARCHAR); (2) the dbt
+model's `SELECT` `CAST`s those columns `AS variant` instead of leaving them string. **Nothing else in the model
+logic changes.**
 
 ---
 
@@ -159,14 +174,14 @@ service** with `./ingestion_polaris` mounted and Polaris env (OAuth2 REST + `ctv
 2. **`.env`** has `POLARIS_OAUTH2_CREDENTIAL` (the `trino_poc` client_id:secret) so the `polaris` Trino catalog
    authenticates.
 3. **Feature baseline** already validated on Polaris (v3 + VARIANT + DML + views over REST) — see the runbook
-   matrix. So the catalog can host what Phase 2 needs.
+   matrix. So the catalog can host what the v3+VARIANT build needs.
 
 ---
 
 ## 4. Build the clones (one-time)
 
-> Keep the clones **thin** — copy, then change only the catalog binding (and, in Phase 2, the VARIANT columns).
-> Don't diverge the transform logic; it must stay comparable to Nessie.
+> Keep the clones **thin** — copy, then change only the catalog binding and the VARIANT columns (table types +
+> the `CAST`s that produce them). Don't diverge the transform logic; it must stay comparable to Nessie.
 
 1. **`dbt_polaris/`** — copy `dbt/` and change the profile catalog to `polaris`:
    ```bash
@@ -190,56 +205,45 @@ service** with `./ingestion_polaris` mounted and Polaris env (OAuth2 REST + `ctv
 3. **`ddl/polaris/`** — **regenerate from the source Databricks table DDL (§0), NOT from `ddl/nessie/`** (which
    encodes the VARCHAR workaround). Target: **v3** (`WITH (format_version = 3)`) with real **`variant`** columns
    matching the source (§0 inventory), Spark→Trino mapped (STRING→VARCHAR, **keep `variant`**, INT→INTEGER,
-   FLOAT→REAL, TIMESTAMP→`timestamp(6) with time zone`, CLUSTER BY→partition+sort). *(Optional Phase-1 diagnostic
-   only: a v2/VARCHAR copy of `ddl/nessie/` with the catalog swapped, to smoke-test catalog mechanics.)*
+   FLOAT→REAL, TIMESTAMP→`timestamp(6) with time zone`, CLUSTER BY→partition+sort). *(Optional debugging
+   diagnostic only: a v2/VARCHAR copy of `ddl/nessie/` with the catalog swapped, to isolate catalog mechanics.)*
 4. **`ddl/postgres/polaris/`** — copy `ddl/postgres/nessie/piece3/4/5*.sql`; rename the clone objects to
    `*_ctv_poc_pol` and create **separate** creative_id / occurrence_id sequences + id-block procs.
 
 ---
 
-## 5. Phase 1 — catalog swap (prove parity on Polaris, same schema)
+## 5. Implementation order (mirrors the Nessie daily runbook)
 
-Run each piece on Polaris, then compare to the Nessie result. Create the Polaris schemas + tables first:
+Build in the **same dependency order operators run daily** on Nessie
+([`../nessie/ctv_daily_runbook.md`](../nessie/ctv_daily_runbook.md)). For **each** step: clone the Nessie code →
+verify every table's column types against the Databricks `table_ddl` → create the table **v3 + `variant`** (variant
+only where source has it, §0) → in the dbt model, `CAST(... AS variant)` on those columns → run on Polaris →
+compare to Nessie (counts / ids / watermarks) and to **source UC** for VARIANT values. **Do not touch the model
+logic** beyond the VARIANT column edits.
 
-```bash
-# create schemas + all persistent tables on Polaris (Phase 1 = v2, same as Nessie)
-for f in ddl/polaris/0*.sql; do docker exec -i trino trino -f /dev/stdin < "$f"; done
-docker exec -i trino trino --execute "SHOW TABLES FROM polaris.bronze"   # repeat silver/gold
-# seed the Polaris watermarks (same rows as Nessie, in polaris.silver.watermark_control)
-```
-
-Then, piece by piece (mirror [`../nessie/ctv_daily_runbook.md`](../nessie/ctv_daily_runbook.md), swapping the
-catalog):
-
-| Piece | Nessie run | Polaris run | Parity check |
+| # | Step | Nessie job tag / cmd | Iceberg tables created (→ where VARIANT applies) |
 | :-- | :-- | :-- | :-- |
-| Reference sync | `python -m ingestion.reference_sync` / `uc_reference_sync` | `python -m ingestion_polaris.reference_sync` / `uc_reference_sync` | 20 tables loaded; row counts per table match |
-| Piece 1 ingestion | `ingestion.ctv_ingestion` + `dbt run --select tag:BIS_CTV_BZ2FILE_TO_RAW_OCC` | `ingestion_polaris.ctv_ingestion` + `dbt_polaris … tag:BIS_CTV_BZ2FILE_TO_RAW_OCC` | staging + raw row counts match; `creative_url_hash` identical |
-| Piece 3 Job A | `tag:RAW_OCCS_TO_CREATIVE_STAGING` | same on `dbt_polaris` (writes to `tempwork.*_ctv_poc_pol`) | creatives staged count matches |
-| Piece 3 Job B | `tag:CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY` | same | first-seen + occ-summary counts match |
-| Piece 4 sync-back | `tag:SYNC_CREATIVES_TO_ICEBERG` | same (reads the Polaris-seeded clones) | per-task counts match; watermarks advance |
-| Piece 5 gold occ | `tag:DIGITAL_RAW_OCC_TO_GOLD_OCC` | same | 811,764 raw → 746,245 gold + 65,519 held (or same deltas on the same input) |
+| **1** | **Reference sync** | `ingestion.reference_sync` (hive 14) + `uc_reference_sync` (UC 6) | reference/lookup schemas — **no VARIANT** (§0); v3 for uniformity |
+| **2** | **Ingestion** (land + staging→raw) | `ctv_ingestion` + `tag:BIS_CTV_BZ2FILE_TO_RAW_OCC` | `bronze.digtial_raw_occurrence_ctv_staging` (`json_data` = raw text, **VARCHAR**) → `bronze.digital_raw_occurrence` (**variant:** `daisy_chain`, `raw_json`) |
+| **3** | **Creative push + first-seen/occ summary** (Piece 3 A+B) | `tag:RAW_OCCS_TO_CREATIVE_STAGING`, `tag:CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY` | Postgres `tempwork.*_ctv_poc_pol` clones + `bronze.creative_unique_urls`, `bronze.missing_digital_occurrence_for_summary` — **verify VARIANT per each table's DDL** |
+| **4** | **Seed production data** (Piece 4a) | `CALL tempwork.sp_seed_creative_clones_ctv_poc_pol('ALL')` | Postgres-only (seeding proc); no Iceberg tables. Creative payloads live in Postgres as JSON/text here |
+| **5** | **Creative sync-back** (Piece 4b) | `tag:SYNC_CREATIVES_TO_ICEBERG` | `gold.creative`, `gold.creative_first_seen`, `silver.creative_dedupe_map`, `gold.component_coding` — **VARIANT-heavy** (`creative_payload`, `machine_learning_payload`, `first_seen_metadata`, `attribute_response`, `secondary_products`, …); produced in dbt → `CAST AS variant` natively |
+| **6** | **Raw → gold occurrence** (Piece 5) | `tag:DIGITAL_RAW_OCC_TO_GOLD_OCC` | `gold.digital_gold_occurrence`, `silver.digital_staging_occurrence` — **verify VARIANT per DDL** (`daisy_chain`, `provider_raw_json`, …) |
 
-**Parity is the exit criterion for Phase 1:** every piece runs green on Polaris and the row counts / id ranges /
-watermark values match the Nessie baseline on the same input.
+**Per-step exit criterion:** the step runs green on Polaris; counts / id ranges / watermarks match the Nessie
+baseline on the same input; and every VARIANT column **round-trips** (write → read → extract a field) and matches
+the source UC value. Only then move to the next step (they have real data dependencies — creatives must be pushed
+(3) and synced (5) before the occurrence gate (6)).
 
----
+**VARIANT write mechanics (all steps).** Ingestion lands VARIANT-origin columns as **string** (PyIceberg can't
+write variant); the first dbt model does `CAST(JSON <text> AS variant)`. dbt-produced tables (Pieces 3–5) write
+variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nessie models' `json_format(...)`
+/ VARCHAR conversions **only on the VARIANT columns** — every other line of the model is unchanged.
 
-## 6. Phase 2 — v3 + VARIANT (the business requirement)
-
-Only after Phase 1 parity. This is the **dbt VARIANT guardrail** (see the evaluation doc §6): wherever a source UC
-table has a **VARIANT** column, the Polaris target must also be **VARIANT** — retire the `VARIANT → VARCHAR/JSON`
-workaround.
-
-1. **DDL:** recreate the Polaris tables as v3 (`WITH (format_version = 3)`) with real `variant` columns where the
-   workaround used VARCHAR/JSON (e.g. `json_data`, `daisy_chain`, `raw_json`).
-2. **dbt models (`dbt_polaris/`):** write VARIANT with `CAST(JSON '…' AS VARIANT)` (Trino) and read with
-   `payload['key']` + `CAST`; drop the `json_format(...)`/`VARCHAR` conversions the Nessie models use.
-3. **Re-run** the pieces and validate the VARIANT columns round-trip (write → read → extract fields), plus the
-   same counts hold.
-
-Comparison shifts here from "counts match Nessie" to "VARIANT stored and read correctly" (Nessie can't hold v3, so
-there's no VARIANT baseline to diff against — validate against the **source UC** VARIANT values instead).
+> **Optional diagnostic only.** If a step fails and you can't tell whether it's a catalog issue or a v3/VARIANT
+> issue, temporarily create that one table as **v2/VARCHAR** (a copy of `ddl/nessie/`) and run the unmodified
+> Nessie model against Polaris to isolate catalog mechanics — then switch it back to v3+variant. This is a
+> debugging aid, not a required phase.
 
 ---
 
@@ -285,7 +289,8 @@ Two options for the dbt container:
 
 ## 9. Cutover & consolidation
 
-The clone is a **temporary** migration artifact. Once Polaris passes Phase 1 + Phase 2 and the AWS build is ready:
+The clone is a **temporary** migration artifact. Once Polaris passes the §5 build (all 6 steps green + VARIANT
+verified) and the AWS build is ready:
 - Polaris becomes the pipeline of record; retire the Nessie `dbt/` / `ingestion/` / `ddl/nessie/` copy (or archive
   it), and the `_polaris` suffixes become the norm.
 - Provision an **IAM role** to switch Polaris from own-keys to real **credential vending** (§ catalog runbook).
@@ -302,6 +307,6 @@ The clone is a **temporary** migration artifact. Once Polaris passes Phase 1 + P
 - ~~**Container split**~~ **DECIDED (§2a):** `dbt_polaris` and `ingestion_polaris` are separate compose services
   that **reuse the Nessie images** (no `requirements.txt` change). Split off a separate ingestion image only if a
   future write path forces a library change.
-- Phase-1 scope: all 5 pieces at once, or a representative subset first for speed.
+- Build cadence: all 6 steps in one pass, or stop-and-verify after each (recommended — they're dependency-ordered).
 - Postgres: dedicated sequences vs an offset block for the Polaris run's ids.
 - Whether to stand up `ingestion_polaris` reference sync for **all** synced tables or just the ones the pieces read.
