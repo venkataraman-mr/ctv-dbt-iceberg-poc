@@ -13,6 +13,12 @@ It stands the **whole CTV pipeline** (reference sync → ingestion → Pieces 1�
 > **Why a clone, not a repoint.** We keep the Nessie pipeline **untouched** as the comparison baseline and build a
 > **separate copy** for Polaris. Full isolation → the working pipeline is never at risk, and we get an
 > apples-to-apples diff (row counts, id ranges, watermarks) at every piece. At cutover we retire the Nessie copy.
+>
+> **What's actually changing.** All 5 pieces are **already built and validated** in the Nessie `dbt/` PoC — the
+> logic and "brain" (models, watermarks, MERGEs, Postgres push, gates) is **reused as-is**. The **only substantive
+> change for Polaris is v3 + VARIANT** (data-type parity with the source Databricks tables). Expect only **minor**
+> dbt tweaks (catalog binding, the VARIANT read/write patterns) — the core logic is intact. This is a
+> catalog + data-type migration, **not** a re-implementation.
 
 ---
 
@@ -27,8 +33,13 @@ tables. This is the business hard requirement driving the whole migration.
 **Schema source of truth — the authoritative Databricks table DDL:**
 `@master_readonly_copy_venkat/db_scripts/notebook_files/table_ddl/{bronze,silver,gold,custom,spend,archive}.py`
 (one `CREATE TABLE` per UC table; `Digital_Flow_DeepDive.md` calls this "the schema source of truth"). **Derive
-`ddl/polaris/` from THESE, not from `ddl/nessie/`** (which encodes the workaround). Design detail per piece:
-`Digital_Flow_DeepDive.md` + `CLAUDE.md` (Drive project folder).
+`ddl/polaris/` from THESE, not from `ddl/nessie/`** (which encodes the workaround).
+
+> `Digital_Flow_DeepDive.md` + `claude.md` (copied into `docs/reference/databricks_prod/`) document the
+> **running Databricks *production* pipeline** — they are the authority for the source **data types** (v3+VARIANT)
+> and business **semantics**. They are **NOT** the dbt implementation to rebuild: the dbt+Iceberg logic already
+> exists in `dbt/` (Nessie PoC). Use these docs only to (a) get the exact VARIANT/source schemas and (b)
+> sanity-check semantics — the *code* to port is the existing `dbt/`, not the Databricks prod code.
 
 > **⚠️ Supersede the deep-dive's VARIANT guidance.** `Digital_Flow_DeepDive.md` (2026-07-20, **pre-Polaris**)
 > says *"No Iceberg VARIANT type → map to string"* — that is precisely the Nessie-era workaround, and it is
