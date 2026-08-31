@@ -15,10 +15,11 @@ scripts/               catalog/ (nessie|polaris|lakekeeper catalog-PoC tooling) 
 docs/                  ctv_daily_runbook (end-to-end daily run) + infra runbook + per-piece docs + architecture pointer
 ```
 
-> **Catalog binding — important.** This `dbt/` project and every `dbt run` / `dbt build` here run against the
-> **Nessie** (`iceberg`) Trino catalog; `ingestion/` likewise writes to Nessie. The parallel **Polaris** PoC
-> pipeline will be a **separate cloned dbt project** (e.g. `dbt_polaris/`) targeting the `polaris` catalog. So
-> "run the dbt models" / any reference to `dbt/` = the **Nessie** pipeline, not Polaris.
+> **Catalog binding — important.** The `dbt/` project (every `dbt run` / `dbt build`) **and** the `ingestion/`
+> code (reference sync — hive + Unity Catalog — plus CTV landing) run against the **Nessie** (`iceberg`) catalog.
+> The parallel **Polaris** PoC pipeline will be **separate cloned folders** — `dbt_polaris/` and
+> `ingestion_polaris/` — targeting the `polaris` catalog. So any reference to `dbt/` or `ingestion/` = the
+> **Nessie** pipeline, not Polaris.
 
 ## Prerequisites
 - **Docker + Docker Compose v2** on the VM — the only required host install (everything else is
