@@ -119,6 +119,7 @@ logic changes.**
 | :-- | :-- | :-- |
 | Trino catalog | `iceberg` | `polaris` |
 | dbt project | `dbt/` (profile `catalog: iceberg`) | `dbt_polaris/` (profile `catalog: polaris`) |
+| dbt model folders | `bronze/`, `occurrences/`, `creatives/`, `reference/`, `spend/` | **`occurrences/` + `creatives/` only** (see rule below) |
 | Ingestion code | `ingestion/` | `ingestion_polaris/` |
 | Trino DDL | `ddl/nessie/` | `ddl/polaris/` |
 | Postgres DDL | `ddl/postgres/nessie/` | `ddl/postgres/polaris/` |
@@ -131,6 +132,26 @@ logic changes.**
 **Postgres is the one real collision risk.** Separate tempwork tables handle the data; give the Polaris run its
 **own creative_id / occurrence_id sequences** (or id-block tables) too, or the two runs' ids interleave and the
 parity diff gets muddy. Shared S3 bucket is safe (different prefixes). Watermarks are per-catalog (own tables).
+
+### RULE — dbt model folders are by DOMAIN, not medallion layer
+
+`dbt_polaris/models/` has **exactly two folders that hold models: `occurrences/` and `creatives/`.**
+
+- **`occurrences/`** = **every** occurrence model, across all layers — the raw occurrence (staging→raw), the silver
+  staging/hold models, and the gold occurrence models — **plus** the spend update (`avod_ctv_spend_update`, Piece 5)
+  and the `media_property_flatten_vx0_vw` reference view, since both feed the occurrence flow. We do **not** split
+  occurrence models into separate `bronze/` and `gold/` folders — they all live together because they're all about
+  occurrences.
+- **`creatives/`** = every creative model (Piece 3 push + first-seen/summary, Piece 4 sync-back).
+- **The medallion layer is preserved by `config(schema='bronze'|'silver'|'gold')` inside each model — NOT by the
+  folder.** So a model in `occurrences/` still writes to `polaris.bronze.digital_raw_occurrence` etc. Folder =
+  domain; `schema=` = layer.
+- The `bronze/`, `gold/`, `reference/` folders are kept **empty** (no models). `silver/` isn't used.
+
+> This differs from the Nessie layout (which keeps `bronze/digital_raw_occurrence.sql`, `reference/…`, `spend/…`
+> as separate folders). When cloning a Nessie model into `dbt_polaris/`, place it by **domain** per the rule above.
+> *(Edge models `avod_ctv_spend_update` + `media_property_flatten_vx0_vw` are defaulted to `occurrences/`; move if a
+> later step shows one is creative-domain.)*
 
 ---
 
@@ -183,6 +204,23 @@ service** with `./ingestion_polaris` mounted and Polaris env (OAuth2 REST + `ctv
 > Keep the clones **thin** — copy, then change only the catalog binding and the VARIANT columns (table types +
 > the `CAST`s that produce them). Don't diverge the transform logic; it must stay comparable to Nessie.
 
+> **✅ Base structure DONE (2026-08-31).** Scaffolding is in place; per-step work adds the actual models/scripts:
+> - `ddl/polaris/00_create_schemas.sql` — all 8 Polaris schemas (bronze/silver/gold + reference/km_*/productcentral/spend).
+> - `ingestion_polaris/` — `config.py` (Polaris REST+OAuth env), `common/catalog.py` (repointed to Polaris),
+>   `common/{ref_sync_engine,spark_hash}.py` + `requirements.txt` copied verbatim. Piece scripts (`reference_sync`,
+>   `uc_reference_sync`, `ctv_ingestion`) added per step.
+> - `dbt_polaris/` — `dbt_project.yml` (`ctv_occurrence_polaris`), `profiles.yml` (`database: polaris`), `macros/`
+>   copied verbatim (all catalog refs go through `source()` — clean), and a **single consolidated `models/sources.yml`**
+>   (all 10 sources; Iceberg→`polaris`, tempwork clones→`_ctv_poc_pol`). Model folders: **`occurrences/` +
+>   `creatives/`** (domain-organized per §2 rule); `bronze/`/`gold/`/`reference/` kept empty. Models added per step.
+> - `docker-compose.yml` — `dbt_polaris` + `ingestion_polaris` services (reuse the Nessie images).
+>
+> **⚠️ Model catalog literals — handle per step.** The Nessie models hardcode the catalog name **69×** as
+> literal `iceberg.<schema>.<table>` (e.g. `merge into iceberg.gold.creative`, `set rel = 'iceberg.bronze.…'`) —
+> these are **not** covered by `sources.yml`. When cloning each model into `dbt_polaris/`, replace `iceberg.` →
+> `polaris.` in the model body (a mechanical catalog-binding swap, not a logic change). The `sources.yml`
+> consolidation only handles the ~10 `source()`-referenced tables; the literals are the bulk of the catalog coupling.
+
 1. **`dbt_polaris/`** — copy `dbt/` and change the profile catalog to `polaris`:
    ```bash
    cp -r dbt dbt_polaris
@@ -221,14 +259,14 @@ only where source has it, §0) → in the dbt model, `CAST(... AS variant)` on t
 compare to Nessie (counts / ids / watermarks) and to **source UC** for VARIANT values. **Do not touch the model
 logic** beyond the VARIANT column edits.
 
-| # | Step | Nessie job tag / cmd | Iceberg tables created (→ where VARIANT applies) |
-| :-- | :-- | :-- | :-- |
-| **1** | **Reference sync** | `ingestion.reference_sync` (hive 14) + `uc_reference_sync` (UC 6) | reference/lookup schemas — **no VARIANT** (§0); v3 for uniformity |
-| **2** | **Ingestion** (land + staging→raw) | `ctv_ingestion` + `tag:BIS_CTV_BZ2FILE_TO_RAW_OCC` | `bronze.digtial_raw_occurrence_ctv_staging` (`json_data` = raw text, **VARCHAR**) → `bronze.digital_raw_occurrence` (**variant:** `daisy_chain`, `raw_json`) |
-| **3** | **Creative push + first-seen/occ summary** (Piece 3 A+B) | `tag:RAW_OCCS_TO_CREATIVE_STAGING`, `tag:CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY` | Postgres `tempwork.*_ctv_poc_pol` clones + `bronze.creative_unique_urls`, `bronze.missing_digital_occurrence_for_summary` — **verify VARIANT per each table's DDL** |
-| **4** | **Seed production data** (Piece 4a) | `CALL tempwork.sp_seed_creative_clones_ctv_poc_pol('ALL')` | Postgres-only (seeding proc); no Iceberg tables. Creative payloads live in Postgres as JSON/text here |
-| **5** | **Creative sync-back** (Piece 4b) | `tag:SYNC_CREATIVES_TO_ICEBERG` | `gold.creative`, `gold.creative_first_seen`, `silver.creative_dedupe_map`, `gold.component_coding` — **VARIANT-heavy** (`creative_payload`, `machine_learning_payload`, `first_seen_metadata`, `attribute_response`, `secondary_products`, …); produced in dbt → `CAST AS variant` natively |
-| **6** | **Raw → gold occurrence** (Piece 5) | `tag:DIGITAL_RAW_OCC_TO_GOLD_OCC` | `gold.digital_gold_occurrence`, `silver.digital_staging_occurrence` — **verify VARIANT per DDL** (`daisy_chain`, `provider_raw_json`, …) |
+| # | Step | Nessie job tag / cmd | `dbt_polaris/` folder | Iceberg tables created (→ where VARIANT applies) |
+| :-- | :-- | :-- | :-- | :-- |
+| **1** | **Reference sync** | `ingestion.reference_sync` (hive 14) + `uc_reference_sync` (UC 6) | — (Python; `media_property_flatten_vx0_vw` view → `occurrences/`) | reference/lookup schemas — **no VARIANT** (§0); v3 for uniformity |
+| **2** | **Ingestion** (land + staging→raw) | `ctv_ingestion` + `tag:BIS_CTV_BZ2FILE_TO_RAW_OCC` | **`occurrences/`** | `bronze.digtial_raw_occurrence_ctv_staging` (`json_data` = raw text, **VARCHAR**) → `bronze.digital_raw_occurrence` (**variant:** `daisy_chain`, `raw_json`) |
+| **3** | **Creative push + first-seen/occ summary** (Piece 3 A+B) | `tag:RAW_OCCS_TO_CREATIVE_STAGING`, `tag:CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY` | **`creatives/`** | Postgres `tempwork.*_ctv_poc_pol` clones + `bronze.creative_unique_urls`, `bronze.missing_digital_occurrence_for_summary` — **verify VARIANT per each table's DDL** |
+| **4** | **Seed production data** (Piece 4a) | `CALL tempwork.sp_seed_creative_clones_ctv_poc_pol('ALL')` | — (Postgres proc) | Postgres-only (seeding proc); no Iceberg tables. Creative payloads live in Postgres as JSON/text here |
+| **5** | **Creative sync-back** (Piece 4b) | `tag:SYNC_CREATIVES_TO_ICEBERG` | **`creatives/`** | `gold.creative`, `gold.creative_first_seen`, `silver.creative_dedupe_map`, `gold.component_coding` — **VARIANT-heavy** (`creative_payload`, `machine_learning_payload`, `first_seen_metadata`, `attribute_response`, `secondary_products`, …); produced in dbt → `CAST AS variant` natively |
+| **6** | **Raw → gold occurrence** (Piece 5) | `tag:DIGITAL_RAW_OCC_TO_GOLD_OCC` | **`occurrences/`** | `gold.digital_gold_occurrence`, `silver.digital_staging_occurrence` (+ spend update `avod_ctv_spend_update`) — **verify VARIANT per DDL** (`daisy_chain`, `provider_raw_json`, …) |
 
 **Per-step exit criterion:** the step runs green on Polaris; counts / id ranges / watermarks match the Nessie
 baseline on the same input; and every VARIANT column **round-trips** (write → read → extract a field) and matches

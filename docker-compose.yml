@@ -111,6 +111,51 @@ services:
     command: tail -f /dev/null
     restart: unless-stopped
 
+  # ===== Polaris parallel pipeline (side-by-side clone of dbt/ + ingestion/) =====
+  # Same IMAGES as the Nessie dbt/ingestion services (no requirements change) — only the mounted
+  # code folder + catalog binding differ. Run: `docker compose exec dbt_polaris dbt run ...` and
+  # `docker compose exec ingestion_polaris python -m ingestion_polaris.<module>`. The Nessie services
+  # above are untouched. See docs/runbooks/polaris/polaris_pipeline_runbook.md §2a.
+  dbt_polaris:
+    build: { context: ., dockerfile: infra/Dockerfile.dbt }   # reuse the Nessie dbt image
+    container_name: dbt_polaris
+    environment:
+      DBT_PROFILES_DIR: /dbt_polaris
+    volumes:
+      - ./dbt_polaris:/dbt_polaris
+    working_dir: /dbt_polaris
+    depends_on: [trino]
+    command: tail -f /dev/null
+    restart: unless-stopped
+
+  ingestion_polaris:
+    build: { context: ., dockerfile: infra/Dockerfile.ingestion }   # reuse the Nessie ingestion image
+    container_name: ingestion_polaris
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+      S3_BUCKET: ${S3_BUCKET}
+      WAREHOUSE: ${WAREHOUSE}
+      # Polaris Iceberg REST (OAuth2) — the catalog binding that differs from Nessie.
+      POLARIS_ICEBERG_URI: ${POLARIS_ICEBERG_URI:-http://polaris:8181/api/catalog}
+      POLARIS_WAREHOUSE: ${POLARIS_WAREHOUSE:-ctv_poc}
+      POLARIS_OAUTH2_CREDENTIAL: ${POLARIS_OAUTH2_CREDENTIAL}
+      POLARIS_SCOPE: ${POLARIS_SCOPE:-PRINCIPAL_ROLE:ALL}
+      AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME}
+      AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY}
+      UC_AZURE_STORAGE_ACCOUNT_NAME: ${UC_AZURE_STORAGE_ACCOUNT_NAME:-}
+      UC_AZURE_STORAGE_ACCOUNT_KEY: ${UC_AZURE_STORAGE_ACCOUNT_KEY:-}
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+      SSL_CERT_DIR: /etc/ssl/certs
+      CURL_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
+    volumes:
+      - ./ingestion_polaris:/app/ingestion_polaris
+    working_dir: /app
+    depends_on: [polaris]
+    command: tail -f /dev/null
+    restart: unless-stopped
+
   # ===== Iceberg catalogs under evaluation — start with the stack =====
   # Candidates that may REPLACE Nessie for the whole pipeline if they meet the v3+VARIANT hard reqs, so they
   # live in the main compose (not a throwaway overlay). Trino reaches them by service name; there is deliberately

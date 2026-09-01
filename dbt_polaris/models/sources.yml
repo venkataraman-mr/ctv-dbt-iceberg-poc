@@ -1,0 +1,142 @@
+version: 2
+
+# =============================================================================================
+# SINGLE consolidated source manifest for dbt_polaris (replaces the 3 per-folder sources.yml the
+# Nessie project uses). dbt parses sources globally, so any model in any folder can source() these
+# regardless of where this file sits. One file = one place to flip the catalog and see every
+# external input. Organized in three blocks: Polaris pipeline / Polaris reference / Postgres.
+#
+# vs. Nessie: every Iceberg source's `database:` is `polaris` (was `iceberg`); the Postgres sources
+# are unchanged EXCEPT the tempwork clones, which are the Polaris clones `*_ctv_poc_pol` (runbook §2).
+# =============================================================================================
+
+sources:
+
+  # ----- (A) Polaris Iceberg — pipeline -----------------------------------------------------
+  # bronze staging landing — owned by the Python landing step (ingestion_polaris/ctv_ingestion.py),
+  # append-only, read-only here. Name mirrors legacy verbatim (incl. the historical "digtial"
+  # misspelling).
+  - name: bronze
+    database: polaris
+    schema: bronze
+    tables:
+      # Piece 3 creative-push maintains these two bronze tables (created by ddl/polaris/04). Job A
+      # reads them (anti-joins) and writes creative_unique_urls; creative_autochaff stays empty for CTV.
+      - name: creative_unique_urls                   # url->creative_id registry + is_staged flag
+      - name: creative_autochaff                     # known auto-chaff hashes (empty for CTV)
+      - name: missing_digital_occurrence_for_summary # Job B occ-summary park/release buffer
+
+      - name: digtial_raw_occurrence_ctv_staging     # CTV bz2/json staging landing (append-only)
+        description: >
+          CTV staging landing. One row per JSON occurrence object: json_data (raw JSON text — stays
+          VARCHAR; the per-field VARIANT lives on bronze.digital_raw_occurrence), record_index,
+          source_filename, blob_name, created_timestamp (UTC, no zone), and creative_url_hash
+          (precomputed exact Spark xxhash64 seed 42). Consumed by the staging->raw model.
+        columns:
+          - name: json_data
+            description: "Occurrence JSON text (one object per row); parsed in staging->raw."
+          - name: record_index
+            description: "Index of the object within its source file."
+          - name: source_filename
+            description: "Source file name (without .bz2)."
+          - name: blob_name
+            description: "Source object key (with .bz2)."
+          - name: created_timestamp
+            description: "Landing/batch load time (UTC, no zone). Ordering key for dedup."
+          - name: creative_url_hash
+            description: "Precomputed exact Spark xxhash64(seed 42) of the creative.url expression."
+
+  # NOTE: digital_raw_occurrence is NOT a source — it is produced by the dbt incremental model
+  # models/bronze/digital_raw_occurrence.sql (staging->raw). Downstream pieces ref() it.
+
+  # watermark control table (version + timestamp watermarks live here)
+  - name: control
+    database: polaris
+    schema: silver
+    tables:
+      - name: watermark_control
+
+  # ----- (B) Polaris Iceberg — reference / lookup (synced Azure Delta -> Iceberg) ------------
+  # Read-only. Each source database is mirrored to a same-named Iceberg schema (polaris.<db>.<table>).
+  - name: km_preparation_db
+    database: polaris
+    schema: km_preparation_db
+    tables:
+      - name: adscore_provided_adservers
+      - name: data_provider
+      - name: media_property_data_provider_map
+      - name: origin
+      - name: source_channel
+      - name: standard_ad_size
+      - name: standard_mime_type
+      - name: vx0_vx2_component_mapping
+
+  - name: km_preparation_gold_db
+    database: polaris
+    schema: km_preparation_gold_db
+    tables:
+      - name: media_property_flatten
+
+  - name: productcentral
+    database: polaris
+    schema: productcentral
+    tables:
+      - name: company
+      - name: product_flatten
+      - name: productmap
+      - name: vx0_vx2_advertiser_mapping
+      - name: vx0_vx2_mattress_product_mapping
+
+  # UC reference dims (creative dedupe + market mapping), loaded by uc_reference_sync. No VARIANT.
+  - name: reference
+    database: polaris
+    schema: reference
+    tables:
+      - name: creative_match_type
+      - name: global_market
+      - name: provider_global_market_map
+      - name: media
+
+  # Spend averages — loaded by the UC sync (external Delta on the UC blob). Read by Piece 5. No VARIANT
+  # (the source_json VARIANT in spend.py is on the out-of-scope tv_rates_* tables, not synced).
+  - name: spend
+    database: polaris
+    schema: spend
+    tables:
+      - name: digital_dmi_prelim_spend_average_by_media
+      - name: digital_dmi_prelim_spend_average_by_property
+
+  # ----- (C) Postgres (Trino `postgres` catalog — NOT Iceberg; unchanged vs. Nessie) --------
+  # Prod `creatives` schema — the READ side for the Piece 4 sync-back seed. Real, shared, read-only.
+  - name: creatives
+    database: postgres
+    schema: creatives
+    tables:
+      - name: creative
+      - name: creative_first_seen
+      - name: creative_dedupe_map
+      - name: component_coding
+      - name: creative_classification_engine_holding
+
+  # vx2 taxonomy dims (advertiser/product masters) — read straight from Postgres via the Trino catalog.
+  - name: vx2_taxonomy
+    database: postgres
+    schema: vx2_taxonomy
+    tables:
+      - name: d_advertiser
+      - name: d_product
+
+  # Piece 4 sync-back READS the seeded tempwork CLONES. For Polaris these are the `*_ctv_poc_pol`
+  # clones (separate from the Nessie `*_ctv_poc` objects) created by ddl/postgres/polaris/*.sql, so
+  # the two runs never collide. The *_forsync_tmp_* / crtv_sync_* scratch are created at run time by
+  # the cloned procs.
+  - name: tempwork
+    database: postgres
+    schema: tempwork
+    tables:
+      - name: creative_forsync_tmp_ctv_poc_pol                           # task 1 proc output
+      - name: component_coding_forsync_tmp_ctv_poc_pol                   # task 4 proc output
+      - name: crtv_sync_to_db_updated_crtvs_with_holding_flag_ctv_poc_pol # task 1 CE-hold source
+      - name: creative_first_seen_ctv_poc_pol                            # task 2
+      - name: creative_dedupe_map_ctv_poc_pol                            # task 3
+      - name: creative_ctv_poc_pol                                       # task 3 delete pass

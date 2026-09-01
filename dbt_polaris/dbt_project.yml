@@ -1,0 +1,41 @@
+name: 'ctv_occurrence_polaris'
+version: '1.0.0'
+profile: 'ctv_occurrence_polaris'
+config-version: 2
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+# Polaris clone of dbt/dbt_project.yml. Same logic and tags as the Nessie project; the ONLY
+# intended differences vs. dbt/ are (1) the target catalog is `polaris` (profiles.yml), and
+# (2) models add real v3 `variant` columns where the source table_ddl has VARIANT. Do not diverge
+# the transform logic — see docs/runbooks/polaris/polaris_pipeline_runbook.md.
+
+# Drop each job's scratch tables at end of a successful run — the analog of the Databricks jobwork DROP.
+# Only fires if no model with that tag failed this run; a failed run keeps that tag's scratch for debugging.
+# Opt out per job: dbt run ... --vars 'keep_<TAG>_tables: true'. Tags match the Databricks job names.
+on-run-end:
+  - "{{ cleanup_tagged_models(results, 'RAW_OCCS_TO_CREATIVE_STAGING') }}"
+  - "{{ cleanup_tagged_models(results, 'CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY') }}"
+  - "{{ cleanup_tagged_models(results, 'SYNC_CREATIVES_TO_ICEBERG') }}"
+  - "{{ cleanup_tagged_models(results, 'DIGITAL_RAW_OCC_TO_GOLD_OCC') }}"
+
+models:
+  ctv_occurrence_polaris:
+    +materialized: view
+    # Kept OFF to mirror the validated Nessie behavior for an apples-to-apples parity run. NOTE:
+    # Polaris (Iceberg REST) DOES support CREATE VIEW, so this can likely be relaxed to the dbt
+    # default later — verify incremental models still land as TABLES first (runbook §8).
+    +views_enabled: false
+    # ---------------------------------------------------------------------------------------------
+    # MODEL FOLDERS ARE BY DOMAIN, not by medallion layer (RULE — see runbook §2):
+    #   occurrences/  = ALL occurrence models (raw + staging + gold, PLUS the spend update and the
+    #                   media_property reference view — everything feeding the occurrence flow).
+    #   creatives/    = ALL creative models.
+    # The medallion SCHEMA (bronze/silver/gold) is set PER-MODEL via config(schema=...), so
+    # polaris.bronze / silver / gold are still populated even though the model files live in
+    # occurrences/ or creatives/. Every model self-configures (materialized / schema / tags), so no
+    # folder-level defaults are needed here. The bronze / gold / reference folders are kept EMPTY.
+    # ---------------------------------------------------------------------------------------------
