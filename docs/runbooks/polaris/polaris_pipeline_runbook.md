@@ -95,6 +95,11 @@ source-type parity.
 `table_ddl`; bring in `variant` + `format_version=3` for every table we create. Do **not** change the dbt logic we
 already validated — the only edits are the VARIANT pieces (table types + the `CAST`s that produce them).*
 
+> **v3 scope.** "v3 for every table" applies to every **pipeline** table we build (occurrence + creative — all
+> Trino/dbt-written). The **one exception is the reference/spend sync** (Step 1): PyIceberg 0.11.1 can't write v3,
+> those tables have no VARIANT, and **in production this data isn't synced — it's read directly from Databricks via
+> Trino** — so the PoC reference mirrors stay v2. See §5 Build progress.
+
 - **Parallel clone.** New folders `dbt_polaris/`, `ingestion_polaris/`, `ddl/polaris/`, `ddl/postgres/polaris/`,
   all targeting the **`polaris`** Trino catalog. Nessie's `dbt/`, `ingestion/`, `ddl/nessie/`,
   `ddl/postgres/nessie/` stay as-is.
@@ -283,15 +288,45 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
 > Nessie model against Polaris to isolate catalog mechanics — then switch it back to v3+variant. This is a
 > debugging aid, not a required phase.
 
+### Build progress
+
+**✅ Step 1 — Reference sync (built 2026-09-01).**
+- `ingestion_polaris/reference_sync.py` + `uc_reference_sync.py` — verbatim clones (imports repointed to
+  `ingestion_polaris`; the catalog binding is Polaris via `common/catalog.py`). The shared `ref_sync_engine.py` is
+  reused unchanged. Same `TABLE_MAP`s / Azure sources as Nessie.
+- `dbt_polaris/models/occurrences/media_property_flatten_vx0_vw.sql` — ephemeral reference view; `source()`-only
+  (no `iceberg.` literals), so it works on Polaris unchanged. Placed in `occurrences/` per §2.
+- **Reference/spend tables are created at Iceberg v2, not v3 — DECIDED (2026-09-01), the one exception to
+  v3-everywhere.** PyIceberg 0.11.1 **cannot write v3 at all** (proven: the guard is on
+  `TableMetadataV3.model_dump_json` → `NotImplementedError` on *any* commit that serializes v3 metadata, so it
+  blocks create **and** the daily delete+append reload — even "Trino pre-creates v3, PyIceberg appends" fails).
+  Making these v3 would require moving the sync's writer off PyIceberg to Trino. **We are not doing that**, because:
+  (1) these tables have **no VARIANT** so v3 buys nothing here, and (2) **in production this data is not synced at
+  all — reference and creative data will be read directly from Databricks via Trino** (the sync is a PoC
+  convenience only). So the reference sync stays the verbatim v2 clone. Data-type parity is still honored (engine
+  maps Delta→Iceberg types: binary→base64 string, TIMESTAMP→timestamptz-UTC, as in Nessie). **v3-everywhere still
+  holds for every PIPELINE table we build (occurrence + creative), which are Trino/dbt-written.**
+- **Run (on the VM):**
+  ```bash
+  docker exec -i trino trino -f /dev/stdin < ddl/polaris/00_create_schemas.sql   # once: create polaris.* schemas
+  docker compose up -d ingestion_polaris                                          # build/start the service
+  docker compose exec ingestion_polaris python -m ingestion_polaris.reference_sync      # 14 hive tables
+  docker compose exec ingestion_polaris python -m ingestion_polaris.uc_reference_sync   # 6 UC tables (needs UC_* env)
+  # verify: docker exec -i trino trino --execute "SELECT count(*) FROM polaris.km_preparation_db.data_provider"
+  #         docker exec -i trino trino --execute "SELECT table_schema, table_name FROM polaris.information_schema.tables ORDER BY 1,2"
+  ```
+
 ---
 
 ## 7. Running the Polaris dbt project
 
-Two options for the dbt container:
-- **Reuse the `dbt` service** pointing at the clone: `docker compose run --rm -w /dbt_polaris dbt dbt run …`
-  (mount `./dbt_polaris` into the container, or add `- ./dbt_polaris:/dbt_polaris` to the `dbt` service volumes).
-- **Add a `dbt_polaris` compose service** (a second dbt container with `DBT_PROJECT_DIR=/dbt_polaris`) if you want
-  both projects runnable independently. Decide during the build; the reuse option is lighter.
+Use the dedicated **`dbt_polaris`** compose service (added in §2a) — its own image mount + `database: polaris`
+profile, runs side-by-side with the Nessie `dbt` service:
+```bash
+docker compose exec dbt_polaris dbt run --select <model|tag>     # e.g. tag:BIS_CTV_BZ2FILE_TO_RAW_OCC
+docker compose run --rm dbt_polaris dbt run --select <tag>       # for the parallel-branch jobs (Pieces 4/5, ≥2 threads)
+docker compose exec dbt_polaris dbt ls --select tag:<JOB> --output name    # membership check
+```
 
 ---
 
