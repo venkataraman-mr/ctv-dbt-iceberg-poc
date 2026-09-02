@@ -76,6 +76,9 @@ sources:
     schema: km_preparation_gold_db
     tables:
       - name: media_property_flatten
+      # Iceberg VIEW created by ddl/polaris/01_view_media_property_flatten_vx0_vw.sql (Polaris supports
+      # views; on Nessie this was an ephemeral dbt model). Downstream models source() it, not ref().
+      - name: media_property_flatten_vx0_vw
 
   - name: productcentral
     database: polaris

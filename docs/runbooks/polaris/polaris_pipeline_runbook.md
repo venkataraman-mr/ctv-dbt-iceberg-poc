@@ -143,10 +143,9 @@ parity diff gets muddy. Shared S3 bucket is safe (different prefixes). Watermark
 `dbt_polaris/models/` has **exactly two folders that hold models: `occurrences/` and `creatives/`.**
 
 - **`occurrences/`** = **every** occurrence model, across all layers — the raw occurrence (staging→raw), the silver
-  staging/hold models, and the gold occurrence models — **plus** the spend update (`avod_ctv_spend_update`, Piece 5)
-  and the `media_property_flatten_vx0_vw` reference view, since both feed the occurrence flow. We do **not** split
-  occurrence models into separate `bronze/` and `gold/` folders — they all live together because they're all about
-  occurrences.
+  staging/hold models, and the gold occurrence models — **plus** the spend update (`avod_ctv_spend_update`, Piece 5),
+  since it feeds the occurrence flow. We do **not** split occurrence models into separate `bronze/` and `gold/`
+  folders — they all live together because they're all about occurrences.
 - **`creatives/`** = every creative model (Piece 3 push + first-seen/summary, Piece 4 sync-back).
 - **The medallion layer is preserved by `config(schema='bronze'|'silver'|'gold')` inside each model — NOT by the
   folder.** So a model in `occurrences/` still writes to `polaris.bronze.digital_raw_occurrence` etc. Folder =
@@ -155,8 +154,15 @@ parity diff gets muddy. Shared S3 bucket is safe (different prefixes). Watermark
 
 > This differs from the Nessie layout (which keeps `bronze/digital_raw_occurrence.sql`, `reference/…`, `spend/…`
 > as separate folders). When cloning a Nessie model into `dbt_polaris/`, place it by **domain** per the rule above.
-> *(Edge models `avod_ctv_spend_update` + `media_property_flatten_vx0_vw` are defaulted to `occurrences/`; move if a
-> later step shows one is creative-domain.)*
+> *(Edge model `avod_ctv_spend_update` is defaulted to `occurrences/`; move if a later step shows it's
+> creative-domain.)*
+
+**Views: real Iceberg views, not ephemeral models.** Nessie's native connector can't hold Iceberg views, so the
+Nessie build faked view-shaped objects as **ephemeral dbt models** (e.g. `media_property_flatten_vx0_vw`). **Polaris
+supports Iceberg views**, so on Polaris we create such objects as **real views via `ddl/polaris/*` Trino DDL** in
+their proper schema (e.g. `polaris.km_preparation_gold_db.media_property_flatten_vx0_vw`) and declare them as
+**sources** in `sources.yml` — downstream models `source(...)` them (not `ref()`). This restores the original
+Databricks shape and lets non-dbt tools query them.
 
 ---
 
@@ -266,7 +272,7 @@ logic** beyond the VARIANT column edits.
 
 | # | Step | Nessie job tag / cmd | `dbt_polaris/` folder | Iceberg tables created (→ where VARIANT applies) |
 | :-- | :-- | :-- | :-- | :-- |
-| **1** | **Reference sync** | `ingestion.reference_sync` (hive 14) + `uc_reference_sync` (UC 6) | — (Python; `media_property_flatten_vx0_vw` view → `occurrences/`) | reference/lookup schemas — **no VARIANT** (§0); v3 for uniformity |
+| **1** | **Reference sync** | `ingestion.reference_sync` (hive 14) + `uc_reference_sync` (UC 6) | — (Python + Trino view `ddl/polaris/01`) | reference/lookup schemas — **no VARIANT** (§0); v2 (see below); + view `km_preparation_gold_db.media_property_flatten_vx0_vw` |
 | **2** | **Ingestion** (land + staging→raw) | `ctv_ingestion` + `tag:BIS_CTV_BZ2FILE_TO_RAW_OCC` | **`occurrences/`** | `bronze.digtial_raw_occurrence_ctv_staging` (`json_data` = raw text, **VARCHAR**) → `bronze.digital_raw_occurrence` (**variant:** `daisy_chain`, `raw_json`) |
 | **3** | **Creative push + first-seen/occ summary** (Piece 3 A+B) | `tag:RAW_OCCS_TO_CREATIVE_STAGING`, `tag:CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY` | **`creatives/`** | Postgres `tempwork.*_ctv_poc_pol` clones + `bronze.creative_unique_urls`, `bronze.missing_digital_occurrence_for_summary` — **verify VARIANT per each table's DDL** |
 | **4** | **Seed production data** (Piece 4a) | `CALL tempwork.sp_seed_creative_clones_ctv_poc_pol('ALL')` | — (Postgres proc) | Postgres-only (seeding proc); no Iceberg tables. Creative payloads live in Postgres as JSON/text here |
@@ -294,8 +300,10 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
 - `ingestion_polaris/reference_sync.py` + `uc_reference_sync.py` — verbatim clones (imports repointed to
   `ingestion_polaris`; the catalog binding is Polaris via `common/catalog.py`). The shared `ref_sync_engine.py` is
   reused unchanged. Same `TABLE_MAP`s / Azure sources as Nessie.
-- `dbt_polaris/models/occurrences/media_property_flatten_vx0_vw.sql` — ephemeral reference view; `source()`-only
-  (no `iceberg.` literals), so it works on Polaris unchanged. Placed in `occurrences/` per §2.
+- `ddl/polaris/01_view_media_property_flatten_vx0_vw.sql` — a **real Iceberg view** `polaris.km_preparation_gold_db.
+  media_property_flatten_vx0_vw` (Polaris supports views, so we dropped the Nessie ephemeral-model workaround — see
+  §2 "Views"). Declared as a source in `sources.yml`; downstream models `source()` it. Run **after** the reference
+  sync (its base tables must exist).
 - **Reference/spend tables are created at Iceberg v2, not v3 — DECIDED (2026-09-01), the one exception to
   v3-everywhere.** PyIceberg 0.11.1 **cannot write v3 at all** (proven: the guard is on
   `TableMetadataV3.model_dump_json` → `NotImplementedError` on *any* commit that serializes v3 metadata, so it
@@ -312,9 +320,15 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   docker compose up -d ingestion_polaris                                          # build/start the service
   docker compose exec ingestion_polaris python -m ingestion_polaris.reference_sync      # 14 hive tables
   docker compose exec ingestion_polaris python -m ingestion_polaris.uc_reference_sync   # 6 UC tables (needs UC_* env)
+  docker exec -i trino trino -f /dev/stdin < ddl/polaris/01_view_media_property_flatten_vx0_vw.sql  # after sync
   # verify: docker exec -i trino trino --execute "SELECT count(*) FROM polaris.km_preparation_db.data_provider"
+  #         docker exec -i trino trino --execute "SELECT count(*) FROM polaris.km_preparation_gold_db.media_property_flatten_vx0_vw"
   #         docker exec -i trino trino --execute "SELECT table_schema, table_name FROM polaris.information_schema.tables ORDER BY 1,2"
   ```
+  > **Env reload gotcha.** `docker compose exec` runs in the *already-running* container — it does **not** re-read
+  > `.env`. After changing `.env` (e.g. `POLARIS_OAUTH2_CREDENTIAL`), run `docker compose up -d --force-recreate
+  > <service>` (or `restart`) so the container picks it up. (Symptom seen: PyIceberg OAuth 500 "Failed to retrieve
+  > principal secrets" while Trino worked — Trino had been restarted, the ingestion container had not.)
 
 ---
 
@@ -349,9 +363,13 @@ docker compose exec dbt_polaris dbt ls --select tag:<JOB> --output name    # mem
   still "experimental" — validate row-level DML on v3 Polaris tables **early** (it passed in the feature test, but
   confirm at pipeline scale). Note VARIANT columns sit alongside the MERGE keys — confirm MERGE works on v3+VARIANT
   tables, not just v3.
-- **dbt incremental materialization.** Nessie forced `views_enabled: false` (its native connector can't create
-  views). **Polaris supports views**, so re-check the temp-relation behavior on `dbt_polaris` — you may be able to
-  leave `views_enabled` default, but verify incremental models still land as tables.
+- **Views on Polaris (decided).** Nessie couldn't hold Iceberg views, so view-shaped reference objects were faked as
+  **ephemeral dbt models** and dbt ran with `views_enabled: false`. **Polaris supports Iceberg views**, so
+  view-shaped objects are now **real views created via `ddl/polaris/*` Trino DDL** and consumed as `source()`s (see
+  §2 "Views"; first instance: `media_property_flatten_vx0_vw`). The dbt-project `+views_enabled: false` is a
+  *separate* dbt-trino setting (it controls dbt's own temp relations, not these standalone views) — kept `false` for
+  now to mirror the validated Nessie behavior; it can likely be relaxed on Polaris, but verify incremental models
+  still land as **tables** before flipping it.
 - **Trino `unique-table-location`.** New Polaris tables get a UUID suffix on their S3 path (Trino connector
   default) — cosmetic; documented in `polaris.properties`. Uncomment `iceberg.unique-table-location=false` if you
   want clean paths.
