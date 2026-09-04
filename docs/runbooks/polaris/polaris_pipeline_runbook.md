@@ -378,11 +378,13 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   # verify:
   docker exec -i trino trino --execute "SELECT count(*) FROM polaris.bronze.digtial_raw_occurrence_ctv_staging"
   docker exec -i trino trino --execute "SELECT count(*), min(capture_month), max(capture_month) FROM polaris.bronze.digital_raw_occurrence"
-  # confirm VARIANT round-trips (the make-or-break): extract a field back out of the variant columns
-  docker exec -i trino trino --execute "SELECT provider_occurrence_id, json_query(daisy_chain, 'lax \$'), json_query(raw_json, 'lax \$.occurrence.id') FROM polaris.bronze.digital_raw_occurrence LIMIT 3"
+  # confirm VARIANT round-trips: read a variant with SUBSCRIPT + CAST (NOT json_query — that errors
+  # "Cannot read input of type variant as JSON"). Feature-test syntax: col['key'] then CAST, or CAST(col AS json).
+  docker exec -i trino trino --execute "SELECT provider_occurrence_id, CAST(raw_json['occurrence']['id'] AS varchar) AS occ_id, CAST(daisy_chain AS json) AS daisy_chain_json FROM polaris.bronze.digital_raw_occurrence WHERE daisy_chain IS NOT NULL LIMIT 3"
   ```
-  > **This is the VARIANT make-or-break smoke test** (runbook §0). If `daisy_chain`/`raw_json` write as `variant`
-  > and read back a field, the whole v3+VARIANT approach is proven and the rest is mechanical.
+  > **✅ Step 2 validated (2026-09-04): 811,764 raw rows — exact Nessie parity — with `daisy_chain`/`raw_json` as
+  > real `variant`.** The v3+VARIANT approach is proven end-to-end; the two rules below make Steps 3–6 mechanical.
+  > Read variants with `col['key']` + `CAST` (or `CAST(col AS json)`), never `json_query`.
 
 > ## ⚠️ VARIANT on Polaris — two hard platform rules (settled the hard way in Step 2)
 >
