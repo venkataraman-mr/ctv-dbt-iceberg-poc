@@ -53,7 +53,9 @@ CREATE TABLE IF NOT EXISTS polaris.bronze.digital_raw_occurrence (
     occurrence_description             VARCHAR,
     occurrence_link_url                VARCHAR,
     daisy_chain                        VARIANT,
-    purchase_method_id                 SMALLINT,
+    purchase_method_id                 INTEGER,   -- source is SMALLINT; Iceberg has no 16-bit int and
+                                                  -- the Polaris/Iceberg REST connector rejects smallint
+                                                  -- ("Type not supported for Iceberg: smallint") -> INTEGER
     ad_insertion_point                 VARCHAR,
     raw_json                           VARIANT
 )

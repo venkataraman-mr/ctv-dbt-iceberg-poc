@@ -145,7 +145,7 @@ parsed as (
         cast(null as varchar)                                                               as occurrence_description,
         cast(null as varchar)                                                               as occurrence_link_url,
         cast(json_extract(j, '$.occurrence.unifiedChain') as variant)                       as daisy_chain,
-        try(cast(json_extract_scalar(j, '$.occurrence.purchaseMethod') as smallint))        as purchase_method_id,
+        try(cast(json_extract_scalar(j, '$.occurrence.purchaseMethod') as integer))         as purchase_method_id,
         cast(null as varchar)                                                               as ad_insertion_point,
         cast(json_parse(raw_json_text) as variant)                                          as raw_json,
         row_number() over (partition by occurrence_id order by staging_loaded_at desc)      as r_num

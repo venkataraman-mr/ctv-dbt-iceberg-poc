@@ -48,10 +48,16 @@ tables. This is the business hard requirement driving the whole migration.
 > map-to-string note wherever it appears in the deep-dive.
 
 **Governing rule — the Databricks `table_ddl` is the source of truth for *every* column type.** For each Polaris
-table, match the source column type exactly (STRING→VARCHAR, INT→INTEGER, BIGINT→BIGINT, SMALLINT→SMALLINT,
-DATE→DATE, TIMESTAMP→`timestamp(6) with time zone`, BOOLEAN→BOOLEAN, **VARIANT→`variant`**). Never deviate from
-source; if it's VARIANT in Databricks it's `variant` in Polaris. VARIANT columns are **table-specific** — check the
-actual `CREATE TABLE`, don't carry a column onto a table that doesn't have it.
+table, match the source column type exactly (STRING→VARCHAR, INT→INTEGER, BIGINT→BIGINT, DATE→DATE,
+TIMESTAMP→`timestamp(6) with time zone`, BOOLEAN→BOOLEAN, **VARIANT→`variant`**). Never deviate from source; if
+it's VARIANT in Databricks it's `variant` in Polaris. VARIANT columns are **table-specific** — check the actual
+`CREATE TABLE`, don't carry a column onto a table that doesn't have it.
+
+> **The one forced exception: `SMALLINT`/`TINYINT` → `INTEGER`.** Iceberg has no 8/16-bit int, and the Polaris
+> Iceberg REST connector rejects them (`NOT_SUPPORTED "Type not supported for Iceberg: smallint"`). Map any
+> `SMALLINT`/`TINYINT` source column to `INTEGER` (values fit). This is a physical Iceberg-spec limitation, not a
+> choice — the only place we can't match the source type exactly. (Nessie's *native* connector accepted `smallint`,
+> so `ddl/nessie/*` used it; the Polaris REST connector does not.)
 
 **VARIANT columns to preserve — confirmed per table from the authoritative `table_ddl`:**
 - **`bronze.digital_raw_occurrence` (CTV bronze):** exactly **two** — `daisy_chain`, `raw_json`. *(No `json_data` on
