@@ -371,8 +371,16 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   docker exec -i trino trino --execute "SELECT provider_occurrence_id, json_query(daisy_chain, 'lax \$'), json_query(raw_json, 'lax \$.occurrence.id') FROM polaris.bronze.digital_raw_occurrence LIMIT 3"
   ```
   > **This is the VARIANT make-or-break smoke test** (runbook §0). If `daisy_chain`/`raw_json` write as `variant`
-  > and read back a field, the whole v3+VARIANT approach is proven and the rest is mechanical. If the `CAST(... AS
-  > variant)` write fails, fall back to landing them as VARCHAR and casting in a second model — but try this first.
+  > and read back a field, the whole v3+VARIANT approach is proven and the rest is mechanical.
+
+> **⚠️ GOTCHA — every VARIANT-writing dbt model needs `views_enabled=true` (found in Step 2).** dbt-trino's
+> incremental strategy stages new rows in an **intermediate relation**. With `views_enabled=false` (the Nessie
+> default) that intermediate is a **v2 Iceberg table**, which **cannot hold `variant`** → the run fails with
+> `NOT_SUPPORTED "Unsupported Hive type: variant"`. Set **`views_enabled=true`** on any model that writes a
+> `variant` column (Polaris supports views) so the intermediate is a view and the variant flows straight into the
+> pre-created **v3** target. Keep `format_version:'3'` in `properties` too, so a `--full-refresh` recreates the
+> target as v3. **This applies to Step 5 (creative) and Step 6 (gold occurrence) models as well** — we may flip the
+> project-level `+views_enabled` to `true` once confirmed, but per-model is the safe minimum.
 
 ---
 
