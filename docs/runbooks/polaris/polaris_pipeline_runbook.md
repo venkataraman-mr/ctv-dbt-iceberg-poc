@@ -171,6 +171,26 @@ their proper schema (e.g. `polaris.km_preparation_gold_db.media_property_flatten
 **sources** in `sources.yml` — downstream models `source(...)` them (not `ref()`). This restores the original
 Databricks shape and lets non-dbt tools query them.
 
+### Multi-media: `bronze.digital_raw_occurrence` is a SHARED table (design for later media)
+
+`bronze.digital_raw_occurrence` is **one physical table** for the whole Digital family — Digital, Social, and
+AVOD/CTV all append to it (US; `_ca` for Canada), disambiguated by `provider_code`/`source_channel`. The PoC only
+implements the CTV media, but the design must not block the others:
+
+- **One model owns the table — extend it, don't add siblings.** dbt enforces **one model per relation**, so you
+  cannot add `digital_raw_occurrence_social.sql` targeting the same table (dbt errors "two models produce relation
+  …"). The model name `digital_raw_occurrence.sql` is correct; when a new media arrives, **generalize this model**
+  (media-driven), don't create a second one.
+- **Keep it one physical table** (not a union view): Piece 3 reads new rows via `system.table_changes` (CDF), which
+  needs real snapshots — a view has none.
+- **Two structuring options:** (a) **media-parameterized model** run once per media (`--vars 'media: ctv'` / `social`),
+  each watermark-scoped and appending — closest to the legacy per-job design and enables parallel per-media jobs;
+  (b) **UNION-of-CTEs** single model that does all media in one run — simpler, but no per-media parallelism.
+- **Concurrency (the parallel-job coupling `claude.md` flags):** parallel per-media appends rely on **Iceberg
+  optimistic concurrency + `max_commit_retry`** (set to 20 on the table) and **per-media version watermarks** (one
+  `watermark_control` row per media, e.g. `BIS_CTV_…`, `BIS_SOCIAL_…`). Commit conflicts are **`capture_month`-scoped**
+  (the partition); append-only + the `NOT EXISTS` guard make retries safe (no dupes/loss).
+
 ---
 
 ## 2a. Container topology (Docker)

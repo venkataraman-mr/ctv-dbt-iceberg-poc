@@ -69,6 +69,11 @@ CREATE TABLE IF NOT EXISTS polaris.bronze.digital_raw_occurrence (
 WITH (
     format = 'PARQUET',
     format_version = 3,
-    partitioning = ARRAY['capture_month']
+    partitioning = ARRAY['capture_month'],
     -- NO sorted_by: incompatible with the VARIANT columns on write (see note above).
+    -- SHARED TABLE across the Digital family (Digital / Social / AVOD-CTV all append here,
+    -- disambiguated by provider_code/source_channel). When multiple media ingestion jobs run in
+    -- parallel they append concurrently; max_commit_retry lets colliding Iceberg commits retry
+    -- instead of failing (append-only + NOT EXISTS guard => safe). Conflicts are capture_month-scoped.
+    max_commit_retry = 20
 );
