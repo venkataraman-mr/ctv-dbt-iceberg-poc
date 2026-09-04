@@ -340,11 +340,13 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
 **✅ Step 2 — Ingestion: land → staging → raw (built 2026-09-01).**
 - `ingestion_polaris/ctv_ingestion.py` — verbatim clone (imports repointed). Lands `.bz2`/JSON from S3 into
   `bronze.digtial_raw_occurrence_ctv_staging` via PyIceberg (append).
-- `dbt_polaris/models/occurrences/digital_raw_occurrence_stg.sql` (materialized `table`, VARCHAR for
-  `daisy_chain`/`raw_json`) **+** `macros/promote_digital_raw_occurrence.sql` (post-hook direct INSERT casting those
-  two to `variant`) → the pre-created v3 `bronze.digital_raw_occurrence`. Split because dbt-trino can't stage a
-  variant column — see the VARIANT gotcha/pattern below. All transform logic, the version watermark, and the
-  idempotency guard are otherwise the Nessie logic; only `purchase_method_id` is `SMALLINT→INTEGER` (§0 exception).
+- `dbt_polaris/models/occurrences/digital_raw_occurrence.sql` — **single incremental model** (the "initial way"),
+  logic identical to the Nessie staging→raw model, with the variant `CAST`s inline (`daisy_chain` =
+  `cast(json_extract(j,'$.occurrence.unifiedChain') as variant)`, `raw_json` = `cast(json_parse(raw_json_text) as
+  variant)`), `properties={format_version:'3', partitioning:[capture_month]}` and **no sorted_by**. Only other
+  change vs. Nessie: `purchase_method_id` `SMALLINT→INTEGER` (§0). Watermark + idempotency guard unchanged.
+  *(An earlier VARCHAR-staging + run-operation-promote workaround was removed — it was only needed because of the
+  sorted_by red herring; a plain model works.)*
 - DDL: `ddl/polaris/01_..._ctv_staging.sql` (**v2** — PyIceberg appends here), `02_bronze_digital_raw_occurrence.sql`
   (**v3 + variant** on `daisy_chain`/`raw_json`, `purchase_method_id` INTEGER, types matched to source `bronze.py`),
   `03_silver_watermark_control.sql` (**v3**, partitioned by `watermark_name`) + seeds the ingestion watermark.
@@ -368,13 +370,9 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   ```bash
   # one-time DDL (structural tables):
   for f in ddl/polaris/0[1-3]_*.sql; do echo "== $f =="; docker exec -i trino trino -f /dev/stdin < "$f"; done
-  # land the day's files (upload to landing_polaris first, see above), then staging->raw (TWO steps):
+  # land the day's files (upload to landing_polaris first, see above), then staging->raw (single model):
   docker compose exec ingestion_polaris python -m ingestion_polaris.ctv_ingestion
-  docker compose exec dbt_polaris dbt run --select digital_raw_occurrence_stg        # 1. VARCHAR batch (marks watermark)
-  docker compose exec dbt_polaris dbt run-operation promote_digital_raw_occurrence   # 2. autocommit INSERT->v3 variant + watermark advance
-  # If step 2 errors with "Unsupported Hive type: variant" (dbt run_query still wrapped a txn), use the
-  # guaranteed autocommit fallback instead of the run-operation:
-  #   docker exec -i trino trino -f /dev/stdin < scripts/catalog/polaris/promote_digital_raw_occurrence.sql
+  docker compose exec dbt_polaris dbt run --select digital_raw_occurrence        # or tag:BIS_CTV_BZ2FILE_TO_RAW_OCC
   # verify:
   docker exec -i trino trino --execute "SELECT count(*) FROM polaris.bronze.digtial_raw_occurrence_ctv_staging"
   docker exec -i trino trino --execute "SELECT count(*), min(capture_month), max(capture_month) FROM polaris.bronze.digital_raw_occurrence"
@@ -386,9 +384,9 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   > real `variant`.** The v3+VARIANT approach is proven end-to-end; the two rules below make Steps 3–6 mechanical.
   > Read variants with `col['key']` + `CAST` (or `CAST(col AS json)`), never `json_query`.
 
-> ## ⚠️ VARIANT on Polaris — two hard platform rules (settled the hard way in Step 2)
+> ## ⚠️ VARIANT on Polaris — the ONE rule that matters (settled the hard way in Step 2)
 >
-> **RULE 1 — a table with a `variant` column MUST NOT use `sorted_by`.** Trino's sort-on-write serializes **every**
+> **RULE — a table with a `variant` column MUST NOT use `sorted_by`.** Trino's sort-on-write serializes **every**
 > column (including the variant) through its legacy Hive-type mapping, which doesn't know `variant` →
 > `NOT_SUPPORTED "Unsupported Hive type: variant"` on **any** write (INSERT, CTAS, autocommit or not).
 > **Proven:** the identical `INSERT … SELECT … CAST(… AS variant)` of 811,764 rows **succeeds** into a
@@ -401,21 +399,18 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
 > > So it's **not catalog-specific** (Lakekeeper/Glue via the same Trino would hit it too) and it's
 > > **version-dependent** — a newer Trino that handles `variant` in the sorted-write path would let `sorted_by` return.
 >
-> **RULE 2 — dbt can't materialize a `variant` column; land VARCHAR then promote with a direct INSERT.** dbt-trino's
-> incremental/table materialization stages rows in a `__dbt_tmp` relation created **without** `format_version=3`, and
-> a non-v3 relation (table *or* view) can't hold `variant`. dbt puts no `format_version` on that intermediate and
-> there's no config lever. **The only thing that writes variant is a direct `INSERT`/`CTAS` into an already-v3
-> table.** So: (1) a dbt model produces the variant-destined columns as **VARCHAR (JSON text)** — nothing ever
-> stages variant, builds clean; (2) a **`run-operation` macro does a direct `INSERT … SELECT …, CAST(json_parse(col)
-> AS variant) …`** into the pre-created v3 target, with a `NOT EXISTS` guard. Must be a **run-operation** (or raw
-> `trino -f`), NOT a model/post-hook — the promote has to run outside dbt's materialization.
+> **A normal single dbt model writes `variant` fine** — once `sorted_by` is gone. Proven: an incremental model
+> with `properties={format_version:'3', partitioning:[...]}` and `cast(... as variant)` builds on both the first
+> (CTAS) and subsequent (`__dbt_tmp`) runs. dbt **does** apply `format_version=3` to its `__dbt_tmp` intermediate,
+> so the intermediate is v3 and holds variant. The earlier "dbt can't stage variant / needs a VARCHAR staging +
+> run-operation promote" theory was **wrong** — every one of those failures was actually the `sorted_by` on the
+> target. So: keep the model as a plain incremental model with the variant `CAST`s inline; just **omit `sorted_by`**
+> on any table that has a variant column.
 >
-> **Step 2 reference impl (reuse for creative/gold in Steps 5–6):**
-> `models/occurrences/digital_raw_occurrence_stg.sql` (materialized `table`, VARCHAR) →
-> `dbt run-operation promote_digital_raw_occurrence` (`macros/promote_digital_raw_occurrence.sql`) →
-> `bronze.digital_raw_occurrence` (v3, **partitioning only, no sorted_by**, pre-created by `ddl/polaris/02`).
-> Guaranteed autocommit fallback if `run-operation` misbehaves: `scripts/catalog/polaris/promote_digital_raw_occurrence.sql`
-> via `trino -f`. *(Per-target promote macro is verbose; generalize with column introspection once proven.)*
+> **Step 2 reference impl:** `models/occurrences/digital_raw_occurrence.sql` (single incremental model, variant
+> casts inline, `format_version=3` + `partitioning` only) → `bronze.digital_raw_occurrence` (pre-created by
+> `ddl/polaris/02`, **no sorted_by**). Reads variants with `col['key']` + `CAST` (or `CAST(col AS json)`), never
+> `json_query`. Same shape reused for the creative/gold variant models in Steps 5–6.
 
 ---
 

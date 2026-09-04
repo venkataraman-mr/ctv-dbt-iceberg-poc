@@ -1,32 +1,29 @@
 {#
-  Piece 1 — CTV staging -> raw occurrence (POLARIS). SPLIT into two hops because dbt-trino's
-  incremental strategy can't stage a `variant` column (its …__dbt_tmp intermediate isn't v3):
-    1. THIS model (digital_raw_occurrence_stg): the full staging->raw transform, but daisy_chain and
-       raw_json are kept as VARCHAR (JSON text). Materialized `table`, so each run holds only the
-       current watermark-limited batch (no intermediate variant relation -> no error).
-    2. post-hook promote_digital_raw_occurrence(): a DIRECT INSERT into the pre-created v3+VARIANT
-       bronze.digital_raw_occurrence, casting those two columns to `variant` (works because the target
-       is already v3 and no dbt intermediate is involved).
-  Logic is otherwise identical to the Nessie staging->raw model. Watermark-driven read (version
-  watermark 'BIS_CTV_US_INGESTION_STG_TO_RAW_OCC') unchanged; the final-table idempotency NOT EXISTS
-  moves into the promote macro.
+  Piece 1 — CTV staging -> raw occurrence (POLARIS). Single incremental model, logic identical to the
+  Nessie staging->raw model. The ONLY differences vs. Nessie:
+    - daisy_chain / raw_json write real `variant` (v3) instead of VARCHAR (the hard requirement).
+    - purchase_method_id is INTEGER (source SMALLINT; Iceberg has no 16-bit int — §0 exception).
+    - the target has NO sorted_by (Trino can't sort-write a variant column; partitioning only — see §8).
+  A single dbt incremental model DOES work for variant: dbt applies format_version=3 to its __dbt_tmp
+  intermediate, so the v3 intermediate holds variant. (The earlier failures were sorted_by, not the
+  materialization.) Watermark-driven version read, unchanged from Nessie.
 #}
 {%- set wm_name = 'BIS_CTV_US_INGESTION_STG_TO_RAW_OCC' -%}
 {%- set staging_src = source('bronze', 'digtial_raw_occurrence_ctv_staging') -%}
 {%- set wm = watermark_version_begin(wm_name, staging_src) -%}
 
 {{ config(
-    materialized='table',
+    materialized='incremental',
+    incremental_strategy='append',
     schema='bronze',
     tags=['bronze', 'BIS_CTV_BZ2FILE_TO_RAW_OCC'],
-    views_enabled=false
+    views_enabled=false,
+    post_hook="{{ watermark_version_finish('" ~ wm_name ~ "') }}",
+    properties={
+      'format_version': '3',
+      'partitioning': "ARRAY['capture_month']"
+    }
 ) }}
-{#-
-  NO post-hook promote here. dbt runs a model's statements in a transaction, and Trino rejects a
-  `variant` write inside a transaction ("Unsupported Hive type: variant"). The promote + watermark
-  finish run as a separate autocommit step:  dbt run-operation promote_digital_raw_occurrence
-  (watermark_version_begin above still marks InProgress; the operation advances it on success).
--#}
 
 with staged as (
 {%- if wm.start_version is none %}
@@ -122,10 +119,10 @@ parsed as (
         json_extract_scalar(j, '$.occurrence.campaign.landingPage')                         as provider_campaign_landing_page,
         cast(null as varchar)                                                               as occurrence_description,
         cast(null as varchar)                                                               as occurrence_link_url,
-        json_format(json_extract(j, '$.occurrence.unifiedChain'))                           as daisy_chain,     -- VARCHAR (JSON text); cast to variant in the promote
+        cast(json_extract(j, '$.occurrence.unifiedChain') as variant)                       as daisy_chain,
         try(cast(json_extract_scalar(j, '$.occurrence.purchaseMethod') as integer))         as purchase_method_id,
         cast(null as varchar)                                                               as ad_insertion_point,
-        raw_json_text                                                                       as raw_json,        -- VARCHAR (JSON text); cast to variant in the promote
+        cast(json_parse(raw_json_text) as variant)                                          as raw_json,
         row_number() over (partition by occurrence_id order by staging_loaded_at desc)      as r_num
     from typed
 )
@@ -179,3 +176,11 @@ where r_num = 1
   and creative_mime_type = 'video/mp4'
   and publisher_id in (32734360, 33434701, 2945144, 2786484, 43838908, 38149324,
                        11019659, 29528950, 2947526, 29321129, 204389)
+{% if is_incremental() %}
+  and not exists (
+      select 1
+      from {{ this }} t
+      where t.provider_occurrence_id = f.provider_occurrence_id
+        and t.capture_month = f.capture_month
+  )
+{% endif %}
