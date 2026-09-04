@@ -13,6 +13,9 @@ nessie-data/
 dbt/target/
 dbt/dbt_packages/
 dbt/logs/
+dbt_polaris/target/
+dbt_polaris/dbt_packages/
+dbt_polaris/logs/
 # misc
 .ivy2/
 .DS_Store
@@ -20,5 +23,6 @@ dbt/logs/
 # local-only working notes (not shared)
 docs/ctv_dbt_iceberg_poc.md
 dbt/.user.yml
+dbt_polaris/.user.yml
 # checkpoint build artifacts (house-styled docx) — do not commit
 docs/*.docx
