@@ -37,7 +37,7 @@ select
     cast(json_parse(daisy_chain) as variant) as daisy_chain,   -- VARCHAR JSON text -> variant
     purchase_method_id, ad_insertion_point,
     cast(json_parse(raw_json) as variant)    as raw_json        -- VARCHAR JSON text -> variant
-from {{ ref('digital_raw_occurrence_stg') }} s
+from {{ this }} s   {# the staging model's own relation; this macro runs as its post-hook, so {{ this }} = bronze.digital_raw_occurrence_stg. Using ref() here would create a self-cycle. #}
 where not exists (
     select 1
     from {{ target.database }}.bronze.digital_raw_occurrence t
