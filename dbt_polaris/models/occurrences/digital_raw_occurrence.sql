@@ -30,15 +30,17 @@
 {%- set staging_src = source('bronze', 'digtial_raw_occurrence_ctv_staging') -%}
 {%- set wm = watermark_version_begin(wm_name, staging_src) -%}
 
+{#-
+  views_enabled=true (Polaris): the dbt-trino incremental intermediate relation must be a VIEW, not a
+  v2 Iceberg table. A v2 table can't hold `variant` ("Unsupported Hive type: variant"); a view just
+  carries the SELECT, so daisy_chain/raw_json flow as variant straight into the pre-created v3 target.
+  (Nessie forced this false because its native connector couldn't create views.)
+-#}
 {{ config(
     materialized='incremental',
     incremental_strategy='append',
     schema='bronze',
     tags=['bronze', 'BIS_CTV_BZ2FILE_TO_RAW_OCC'],
-    -- views_enabled=true (Polaris): the incremental intermediate relation must be a VIEW, not a v2
-    -- Iceberg table. A v2 table can't hold `variant` ("Unsupported Hive type: variant"); a view just
-    -- carries the SELECT, so daisy_chain/raw_json flow as variant straight into the pre-created v3
-    -- target. (Nessie forced this false because its native connector couldn't create views.)
     views_enabled=true,
     post_hook="{{ watermark_version_finish('" ~ wm_name ~ "') }}",
     properties={
