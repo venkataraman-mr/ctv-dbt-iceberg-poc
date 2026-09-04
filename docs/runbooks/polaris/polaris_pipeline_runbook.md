@@ -384,22 +384,36 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   > **This is the VARIANT make-or-break smoke test** (runbook §0). If `daisy_chain`/`raw_json` write as `variant`
   > and read back a field, the whole v3+VARIANT approach is proven and the rest is mechanical.
 
-> **⚠️ GOTCHA + PATTERN — writing a VARIANT column from dbt-trino (settled in Step 2).** dbt-trino's incremental
-> materialization stages new rows in an intermediate relation (`…__dbt_tmp`) created **without** `format_version=3`.
-> A non-v3 Iceberg table **can't hold `variant`**, and a Trino/Iceberg **view can't declare a `variant` column
-> either**, so **both** `views_enabled=false` (v2 table) and `views_enabled=true` (view) fail with
-> `NOT_SUPPORTED "Unsupported Hive type: variant"`. dbt never puts `format_version` on that intermediate and there's
-> no config lever for it. **The only thing that writes variant is a DIRECT `INSERT`/`CTAS` into an already-v3
-> table** (proven by the catalog feature test).
+> ## ⚠️ VARIANT on Polaris — two hard platform rules (settled the hard way in Step 2)
 >
-> **Pattern for every variant-writing model (Steps 2, 5, 6):** (1) a dbt model produces the rows with the
-> variant-destined columns as **VARCHAR (JSON text)** — no intermediate ever holds variant, so it builds fine;
-> (2) a **post-hook macro does a direct `INSERT INTO <pre-created v3 target> SELECT …, CAST(json_parse(col) AS
-> variant), …`** with a `NOT EXISTS` idempotency guard. Step 2 reference impl:
-> `models/occurrences/digital_raw_occurrence_stg.sql` (materialized `table`, VARCHAR) +
-> `macros/promote_digital_raw_occurrence.sql` (post-hook) → `bronze.digital_raw_occurrence` (v3, pre-created by
-> `ddl/polaris/02`). Same shape reused for creative/gold. *(A per-target promote macro is verbose; generalize with
-> column introspection once the pattern is proven.)*
+> **RULE 1 — a table with a `variant` column MUST NOT use `sorted_by`.** Trino's sort-on-write serializes **every**
+> column (including the variant) through its legacy Hive-type mapping, which doesn't know `variant` →
+> `NOT_SUPPORTED "Unsupported Hive type: variant"` on **any** write (INSERT, CTAS, autocommit or not).
+> **Proven:** the identical `INSERT … SELECT … CAST(… AS variant)` of 811,764 rows **succeeds** into a
+> `partitioning`-only v3 table and **fails** the instant `sorted_by` is present (even sorting by a non-variant
+> column). `partitioning` is completely fine. → **Drop `sorted_by` from every table that has a variant column.**
+> The legacy Databricks CLUSTER BY becomes partitioning-only (perf-only loss; correctness/pruning intact).
+>
+> > **This is a TRINO limitation, not a Polaris one.** Polaris (the REST catalog) only stores metadata and serves
+> > v3+variant fine — the sort-on-write happens inside Trino's Iceberg connector before anything reaches the catalog.
+> > So it's **not catalog-specific** (Lakekeeper/Glue via the same Trino would hit it too) and it's
+> > **version-dependent** — a newer Trino that handles `variant` in the sorted-write path would let `sorted_by` return.
+>
+> **RULE 2 — dbt can't materialize a `variant` column; land VARCHAR then promote with a direct INSERT.** dbt-trino's
+> incremental/table materialization stages rows in a `__dbt_tmp` relation created **without** `format_version=3`, and
+> a non-v3 relation (table *or* view) can't hold `variant`. dbt puts no `format_version` on that intermediate and
+> there's no config lever. **The only thing that writes variant is a direct `INSERT`/`CTAS` into an already-v3
+> table.** So: (1) a dbt model produces the variant-destined columns as **VARCHAR (JSON text)** — nothing ever
+> stages variant, builds clean; (2) a **`run-operation` macro does a direct `INSERT … SELECT …, CAST(json_parse(col)
+> AS variant) …`** into the pre-created v3 target, with a `NOT EXISTS` guard. Must be a **run-operation** (or raw
+> `trino -f`), NOT a model/post-hook — the promote has to run outside dbt's materialization.
+>
+> **Step 2 reference impl (reuse for creative/gold in Steps 5–6):**
+> `models/occurrences/digital_raw_occurrence_stg.sql` (materialized `table`, VARCHAR) →
+> `dbt run-operation promote_digital_raw_occurrence` (`macros/promote_digital_raw_occurrence.sql`) →
+> `bronze.digital_raw_occurrence` (v3, **partitioning only, no sorted_by**, pre-created by `ddl/polaris/02`).
+> Guaranteed autocommit fallback if `run-operation` misbehaves: `scripts/catalog/polaris/promote_digital_raw_occurrence.sql`
+> via `trino -f`. *(Per-target promote macro is verbose; generalize with column introspection once proven.)*
 
 ---
 

@@ -3,11 +3,14 @@
   v3+VARIANT target bronze.digital_raw_occurrence, casting the two JSON-text columns to `variant`,
   then advance the version watermark.
 
-  WHY a run-operation (NOT a model post-hook): dbt batches a model's statements (CTAS + renames +
-  post-hooks) into ONE transaction, and Trino's Iceberg connector rejects a `variant` write inside a
-  transaction that also ran DDL ("Unsupported Hive type: variant"). Run as its own operation, the
-  INSERT executes cleanly — exactly like a plain autocommit `trino --execute` (proven: 811,764 rows).
+  WHY a run-operation direct INSERT (not a dbt model materialization): dbt's incremental strategy
+  stages new rows in a `__dbt_tmp` relation that isn't v3, and a non-v3 relation can't hold `variant`.
+  So the transform lands as VARCHAR (digital_raw_occurrence_stg model), and this operation does the
+  variant cast in a direct INSERT into the pre-created v3 target — no dbt-managed intermediate.
   Idempotent via NOT EXISTS on (provider_occurrence_id, capture_month).
+
+  NOTE: the target must NOT have `sorted_by` — Trino's sort-on-write can't serialize a variant column
+  ("Unsupported Hive type: variant"). partitioning is fine. See ddl/polaris/02.
 
   Invoke AFTER `dbt run --select digital_raw_occurrence_stg`:
       dbt run-operation promote_digital_raw_occurrence

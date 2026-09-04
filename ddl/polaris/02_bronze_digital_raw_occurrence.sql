@@ -11,8 +11,15 @@
 -- *** v3 + VARIANT (the hard requirement). ***  The source has exactly TWO VARIANT columns —
 -- daisy_chain and raw_json — kept as real `variant` here (Nessie stored them as VARCHAR; that
 -- workaround is retired on Polaris). Table is format_version = 3 so it can hold variant. Trino/dbt
--- writes these via CAST(... AS variant) in the model. Partitioned by capture_month + sorted by
--- provider_occurrence_id (the legacy CLUSTER BY).
+-- writes these via CAST(... AS variant).
+--
+-- *** NO sorted_by (Polaris/variant limitation). ***  The legacy CLUSTER BY was (capture_month,
+-- provider_occurrence_id). We keep partitioning by capture_month, but we CANNOT add
+-- sorted_by=provider_occurrence_id: Trino's sort-on-write serializes every column (incl. the variant)
+-- through its legacy Hive-type mapping, which rejects `variant` ("Unsupported Hive type: variant") —
+-- confirmed: same INSERT succeeds with partitioning only, fails the moment sorted_by is present. So
+-- any table with a VARIANT column must omit sorted_by. Perf-only loss (clustering); correctness and
+-- partition pruning are unaffected.
 CREATE TABLE IF NOT EXISTS polaris.bronze.digital_raw_occurrence (
     country_iso_2_code                 VARCHAR,
     provider_code                      VARCHAR,
@@ -62,6 +69,6 @@ CREATE TABLE IF NOT EXISTS polaris.bronze.digital_raw_occurrence (
 WITH (
     format = 'PARQUET',
     format_version = 3,
-    partitioning = ARRAY['capture_month'],
-    sorted_by = ARRAY['provider_occurrence_id']
+    partitioning = ARRAY['capture_month']
+    -- NO sorted_by: incompatible with the VARIANT columns on write (see note above).
 );
