@@ -368,9 +368,13 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   ```bash
   # one-time DDL (structural tables):
   for f in ddl/polaris/0[1-3]_*.sql; do echo "== $f =="; docker exec -i trino trino -f /dev/stdin < "$f"; done
-  # land the day's files (upload to landing_polaris first, see above), then staging->raw:
+  # land the day's files (upload to landing_polaris first, see above), then staging->raw (TWO steps):
   docker compose exec ingestion_polaris python -m ingestion_polaris.ctv_ingestion
-  docker compose exec dbt_polaris dbt run --select digital_raw_occurrence_stg        # or tag:BIS_CTV_BZ2FILE_TO_RAW_OCC (runs stg model + promote hook)
+  docker compose exec dbt_polaris dbt run --select digital_raw_occurrence_stg        # 1. VARCHAR batch (marks watermark)
+  docker compose exec dbt_polaris dbt run-operation promote_digital_raw_occurrence   # 2. autocommit INSERT->v3 variant + watermark advance
+  # If step 2 errors with "Unsupported Hive type: variant" (dbt run_query still wrapped a txn), use the
+  # guaranteed autocommit fallback instead of the run-operation:
+  #   docker exec -i trino trino -f /dev/stdin < scripts/catalog/polaris/promote_digital_raw_occurrence.sql
   # verify:
   docker exec -i trino trino --execute "SELECT count(*) FROM polaris.bronze.digtial_raw_occurrence_ctv_staging"
   docker exec -i trino trino --execute "SELECT count(*), min(capture_month), max(capture_month) FROM polaris.bronze.digital_raw_occurrence"

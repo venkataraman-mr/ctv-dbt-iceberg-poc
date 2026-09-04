@@ -19,12 +19,14 @@
     materialized='table',
     schema='bronze',
     tags=['bronze', 'BIS_CTV_BZ2FILE_TO_RAW_OCC'],
-    views_enabled=false,
-    post_hook=[
-      "{{ promote_digital_raw_occurrence() }}",
-      "{{ watermark_version_finish('" ~ wm_name ~ "') }}"
-    ]
+    views_enabled=false
 ) }}
+{#-
+  NO post-hook promote here. dbt runs a model's statements in a transaction, and Trino rejects a
+  `variant` write inside a transaction ("Unsupported Hive type: variant"). The promote + watermark
+  finish run as a separate autocommit step:  dbt run-operation promote_digital_raw_occurrence
+  (watermark_version_begin above still marks InProgress; the operation advances it on success).
+-#}
 
 with staged as (
 {%- if wm.start_version is none %}
