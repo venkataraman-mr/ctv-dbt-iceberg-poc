@@ -8,7 +8,7 @@
 --
 -- Run AFTER the reference sync has loaded the base tables (km_preparation_gold_db.media_property_flatten
 -- and productcentral.company):
---   docker exec -i trino trino -f /dev/stdin < ddl/polaris/01_view_media_property_flatten_vx0_vw.sql
+--   docker exec -i trino trino -f /dev/stdin < ddl/polaris/views/media_property_flatten_vx0_vw.sql
 --
 -- Downstream dbt models read it via source('km_preparation_gold_db','media_property_flatten_vx0_vw').
 

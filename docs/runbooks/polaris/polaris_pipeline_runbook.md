@@ -1,8 +1,9 @@
 # Polaris pipeline runbook — parallel PoC (Nessie → Polaris)
 
-**Status: DRAFT / plan.** The Polaris pipeline is **not built yet**; this runbook is the build + validation plan.
-It stands the **whole CTV pipeline** (reference sync → ingestion → Pieces 1–5) up on **Apache Polaris**, running
-**in parallel** to the working Nessie pipeline on the same VM, so we can prove parity before the AWS build.
+**Status: IN PROGRESS.** Base structure + **Step 1 (reference sync)** and **Step 2 (ingestion → raw occurrence)**
+built; Steps 3–6 pending (see §5 Build progress). This runbook is both the build + validation plan and the running
+log. It stands the **whole CTV pipeline** (reference sync → ingestion → Pieces 1–5) up on **Apache Polaris**,
+running **in parallel** to the working Nessie pipeline on the same VM, so we can prove parity before the AWS build.
 
 - Catalog decision: **Polaris** (leads confirmed for the AWS non-prod build) — see
   [`../../catalog/iceberg_catalog_evaluation.md`](../../catalog/iceberg_catalog_evaluation.md).
@@ -300,7 +301,7 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
 - `ingestion_polaris/reference_sync.py` + `uc_reference_sync.py` — verbatim clones (imports repointed to
   `ingestion_polaris`; the catalog binding is Polaris via `common/catalog.py`). The shared `ref_sync_engine.py` is
   reused unchanged. Same `TABLE_MAP`s / Azure sources as Nessie.
-- `ddl/polaris/01_view_media_property_flatten_vx0_vw.sql` — a **real Iceberg view** `polaris.km_preparation_gold_db.
+- `ddl/polaris/views/media_property_flatten_vx0_vw.sql` — a **real Iceberg view** `polaris.km_preparation_gold_db.
   media_property_flatten_vx0_vw` (Polaris supports views, so we dropped the Nessie ephemeral-model workaround — see
   §2 "Views"). Declared as a source in `sources.yml`; downstream models `source()` it. Run **after** the reference
   sync (its base tables must exist).
@@ -320,7 +321,7 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   docker compose up -d ingestion_polaris                                          # build/start the service
   docker compose exec ingestion_polaris python -m ingestion_polaris.reference_sync      # 14 hive tables
   docker compose exec ingestion_polaris python -m ingestion_polaris.uc_reference_sync   # 6 UC tables (needs UC_* env)
-  docker exec -i trino trino -f /dev/stdin < ddl/polaris/01_view_media_property_flatten_vx0_vw.sql  # after sync
+  docker exec -i trino trino -f /dev/stdin < ddl/polaris/views/media_property_flatten_vx0_vw.sql  # after sync
   # verify: docker exec -i trino trino --execute "SELECT count(*) FROM polaris.km_preparation_db.data_provider"
   #         docker exec -i trino trino --execute "SELECT count(*) FROM polaris.km_preparation_gold_db.media_property_flatten_vx0_vw"
   #         docker exec -i trino trino --execute "SELECT table_schema, table_name FROM polaris.information_schema.tables ORDER BY 1,2"
@@ -329,6 +330,49 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   > `.env`. After changing `.env` (e.g. `POLARIS_OAUTH2_CREDENTIAL`), run `docker compose up -d --force-recreate
   > <service>` (or `restart`) so the container picks it up. (Symptom seen: PyIceberg OAuth 500 "Failed to retrieve
   > principal secrets" while Trino worked — Trino had been restarted, the ingestion container had not.)
+
+**✅ Step 2 — Ingestion: land → staging → raw (built 2026-09-01).**
+- `ingestion_polaris/ctv_ingestion.py` — verbatim clone (imports repointed). Lands `.bz2`/JSON from S3 into
+  `bronze.digtial_raw_occurrence_ctv_staging` via PyIceberg (append).
+- `dbt_polaris/models/occurrences/digital_raw_occurrence.sql` — clone of the Nessie staging→raw model, in
+  `occurrences/`. **Only two logic edits** (verified by diff): `daisy_chain` → `cast(json_extract(j,'$.occurrence.
+  unifiedChain') as variant)` and `raw_json` → `cast(json_parse(raw_json_text) as variant)`; plus `format_version:'3'`
+  in config. All other transform logic, the version watermark, and the anti-join idempotency are unchanged.
+- DDL: `ddl/polaris/01_..._ctv_staging.sql` (**v2** — PyIceberg appends here), `02_bronze_digital_raw_occurrence.sql`
+  (**v3 + variant** on `daisy_chain`/`raw_json`, types matched to the source `bronze.py` DDL), `03_silver_watermark_
+  control.sql` (**v3**, partitioned by `watermark_name`) + seeds the `BIS_CTV_US_INGESTION_STG_TO_RAW_OCC` watermark.
+- **Staging is the second PyIceberg-written v2 exception** (like reference sync): PyIceberg can't write v3, and the
+  staging landing has no VARIANT (json_data is raw text). The v3+variant lands one hop later, in the dbt-written
+  `bronze.digital_raw_occurrence`.
+- **Separate S3 landing prefix — `landing_polaris/` (not `landing/`).** The landing step *archives* (moves) each
+  processed file, so Polaris and Nessie must not share a prefix or they'd steal each other's files. `config.py`
+  defaults to `s3://<bucket>/landing_polaris/ctv/{ingestion,archive}`. Create the folders once, and upload the day's
+  `.bz2` to the Polaris ingestion prefix (pass `-Prefix` to the shared upload script):
+  ```bash
+  # one-time: create the Polaris landing folders in S3 (folder markers)
+  aws s3api put-object --bucket dataplatformpoc-venketa --key landing_polaris/ctv/ingestion/
+  aws s3api put-object --bucket dataplatformpoc-venketa --key landing_polaris/ctv/archive/
+  ```
+  ```powershell
+  # on your local Windows machine — upload the day's *.bz2 to the POLARIS prefix:
+  powershell -File scripts\upload_ctv_sample.ps1 -Prefix "landing_polaris/ctv/ingestion"
+  ```
+- **Run (on the VM):**
+  ```bash
+  # one-time DDL (structural tables):
+  for f in ddl/polaris/0[1-3]_*.sql; do echo "== $f =="; docker exec -i trino trino -f /dev/stdin < "$f"; done
+  # land the day's files (upload to landing_polaris first, see above), then staging->raw:
+  docker compose exec ingestion_polaris python -m ingestion_polaris.ctv_ingestion
+  docker compose exec dbt_polaris dbt run --select digital_raw_occurrence            # or tag:BIS_CTV_BZ2FILE_TO_RAW_OCC
+  # verify:
+  docker exec -i trino trino --execute "SELECT count(*) FROM polaris.bronze.digtial_raw_occurrence_ctv_staging"
+  docker exec -i trino trino --execute "SELECT count(*), min(capture_month), max(capture_month) FROM polaris.bronze.digital_raw_occurrence"
+  # confirm VARIANT round-trips (the make-or-break): extract a field back out of the variant columns
+  docker exec -i trino trino --execute "SELECT provider_occurrence_id, json_query(daisy_chain, 'lax \$'), json_query(raw_json, 'lax \$.occurrence.id') FROM polaris.bronze.digital_raw_occurrence LIMIT 3"
+  ```
+  > **This is the VARIANT make-or-break smoke test** (runbook §0). If `daisy_chain`/`raw_json` write as `variant`
+  > and read back a field, the whole v3+VARIANT approach is proven and the rest is mechanical. If the `CAST(... AS
+  > variant)` write fails, fall back to landing them as VARCHAR and casting in a second model — but try this first.
 
 ---
 

@@ -1,9 +1,9 @@
 """Central config for the ingestion_polaris package — all values from environment (see .env).
 
-Polaris clone of ingestion/config.py. Only the catalog binding differs: this talks to the
-**Polaris** Iceberg REST endpoint (OAuth2 client-credentials) instead of Nessie. Everything else
-(AWS/Azure/UC storage, CTV landing prefixes) is identical to the Nessie ingestion by design —
-same code, same behavior, different catalog.
+Polaris clone of ingestion/config.py. Two things differ from Nessie: (1) the catalog binding —
+this talks to the **Polaris** Iceberg REST endpoint (OAuth2 client-credentials); and (2) the CTV
+landing prefix — `landing_polaris/` instead of `landing/`, so the two pipelines' archive-on-read
+never collide. Everything else (AWS/Azure/UC storage) is identical to the Nessie ingestion.
 """
 import os
 
@@ -37,5 +37,11 @@ UC_AZURE_KEY     = os.environ.get("UC_AZURE_STORAGE_ACCOUNT_KEY")
 # the landing step decompresses/parses them into bronze staging and moves the processed file under
 # LANDING_ARCHIVE/<YYYY-MM-DD>/. Kept separate from the Iceberg warehouse prefix so raw source files
 # never mingle with table data/metadata.
-LANDING_INGESTION = os.environ.get("CTV_LANDING_INGESTION", f"{S3_BUCKET}/landing/ctv/ingestion")
-LANDING_ARCHIVE   = os.environ.get("CTV_LANDING_ARCHIVE",   f"{S3_BUCKET}/landing/ctv/archive")
+#
+# *** SEPARATE prefix from Nessie (landing_polaris/, NOT landing/). ***  The landing step ARCHIVES
+# (moves) each processed file, so if Polaris and Nessie shared one prefix they'd steal each other's
+# files. The Polaris pipeline reads/archives entirely under landing_polaris/ so the two runs never
+# collide. Upload the day's .bz2 to landing_polaris/ctv/ingestion (see the runbook / upload script
+# -Prefix). This is the deliberate one difference from the Nessie ingestion config.
+LANDING_INGESTION = os.environ.get("CTV_LANDING_INGESTION", f"{S3_BUCKET}/landing_polaris/ctv/ingestion")
+LANDING_ARCHIVE   = os.environ.get("CTV_LANDING_ARCHIVE",   f"{S3_BUCKET}/landing_polaris/ctv/archive")
