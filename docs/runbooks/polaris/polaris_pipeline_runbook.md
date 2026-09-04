@@ -340,13 +340,14 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
 **✅ Step 2 — Ingestion: land → staging → raw (built 2026-09-01).**
 - `ingestion_polaris/ctv_ingestion.py` — verbatim clone (imports repointed). Lands `.bz2`/JSON from S3 into
   `bronze.digtial_raw_occurrence_ctv_staging` via PyIceberg (append).
-- `dbt_polaris/models/occurrences/digital_raw_occurrence.sql` — clone of the Nessie staging→raw model, in
-  `occurrences/`. **Only two logic edits** (verified by diff): `daisy_chain` → `cast(json_extract(j,'$.occurrence.
-  unifiedChain') as variant)` and `raw_json` → `cast(json_parse(raw_json_text) as variant)`; plus `format_version:'3'`
-  in config. All other transform logic, the version watermark, and the anti-join idempotency are unchanged.
+- `dbt_polaris/models/occurrences/digital_raw_occurrence_stg.sql` (materialized `table`, VARCHAR for
+  `daisy_chain`/`raw_json`) **+** `macros/promote_digital_raw_occurrence.sql` (post-hook direct INSERT casting those
+  two to `variant`) → the pre-created v3 `bronze.digital_raw_occurrence`. Split because dbt-trino can't stage a
+  variant column — see the VARIANT gotcha/pattern below. All transform logic, the version watermark, and the
+  idempotency guard are otherwise the Nessie logic; only `purchase_method_id` is `SMALLINT→INTEGER` (§0 exception).
 - DDL: `ddl/polaris/01_..._ctv_staging.sql` (**v2** — PyIceberg appends here), `02_bronze_digital_raw_occurrence.sql`
-  (**v3 + variant** on `daisy_chain`/`raw_json`, types matched to the source `bronze.py` DDL), `03_silver_watermark_
-  control.sql` (**v3**, partitioned by `watermark_name`) + seeds the `BIS_CTV_US_INGESTION_STG_TO_RAW_OCC` watermark.
+  (**v3 + variant** on `daisy_chain`/`raw_json`, `purchase_method_id` INTEGER, types matched to source `bronze.py`),
+  `03_silver_watermark_control.sql` (**v3**, partitioned by `watermark_name`) + seeds the ingestion watermark.
 - **Staging is the second PyIceberg-written v2 exception** (like reference sync): PyIceberg can't write v3, and the
   staging landing has no VARIANT (json_data is raw text). The v3+variant lands one hop later, in the dbt-written
   `bronze.digital_raw_occurrence`.
@@ -369,7 +370,7 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   for f in ddl/polaris/0[1-3]_*.sql; do echo "== $f =="; docker exec -i trino trino -f /dev/stdin < "$f"; done
   # land the day's files (upload to landing_polaris first, see above), then staging->raw:
   docker compose exec ingestion_polaris python -m ingestion_polaris.ctv_ingestion
-  docker compose exec dbt_polaris dbt run --select digital_raw_occurrence            # or tag:BIS_CTV_BZ2FILE_TO_RAW_OCC
+  docker compose exec dbt_polaris dbt run --select digital_raw_occurrence_stg        # or tag:BIS_CTV_BZ2FILE_TO_RAW_OCC (runs stg model + promote hook)
   # verify:
   docker exec -i trino trino --execute "SELECT count(*) FROM polaris.bronze.digtial_raw_occurrence_ctv_staging"
   docker exec -i trino trino --execute "SELECT count(*), min(capture_month), max(capture_month) FROM polaris.bronze.digital_raw_occurrence"
@@ -379,14 +380,22 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   > **This is the VARIANT make-or-break smoke test** (runbook §0). If `daisy_chain`/`raw_json` write as `variant`
   > and read back a field, the whole v3+VARIANT approach is proven and the rest is mechanical.
 
-> **⚠️ GOTCHA — every VARIANT-writing dbt model needs `views_enabled=true` (found in Step 2).** dbt-trino's
-> incremental strategy stages new rows in an **intermediate relation**. With `views_enabled=false` (the Nessie
-> default) that intermediate is a **v2 Iceberg table**, which **cannot hold `variant`** → the run fails with
-> `NOT_SUPPORTED "Unsupported Hive type: variant"`. Set **`views_enabled=true`** on any model that writes a
-> `variant` column (Polaris supports views) so the intermediate is a view and the variant flows straight into the
-> pre-created **v3** target. Keep `format_version:'3'` in `properties` too, so a `--full-refresh` recreates the
-> target as v3. **This applies to Step 5 (creative) and Step 6 (gold occurrence) models as well** — we may flip the
-> project-level `+views_enabled` to `true` once confirmed, but per-model is the safe minimum.
+> **⚠️ GOTCHA + PATTERN — writing a VARIANT column from dbt-trino (settled in Step 2).** dbt-trino's incremental
+> materialization stages new rows in an intermediate relation (`…__dbt_tmp`) created **without** `format_version=3`.
+> A non-v3 Iceberg table **can't hold `variant`**, and a Trino/Iceberg **view can't declare a `variant` column
+> either**, so **both** `views_enabled=false` (v2 table) and `views_enabled=true` (view) fail with
+> `NOT_SUPPORTED "Unsupported Hive type: variant"`. dbt never puts `format_version` on that intermediate and there's
+> no config lever for it. **The only thing that writes variant is a DIRECT `INSERT`/`CTAS` into an already-v3
+> table** (proven by the catalog feature test).
+>
+> **Pattern for every variant-writing model (Steps 2, 5, 6):** (1) a dbt model produces the rows with the
+> variant-destined columns as **VARCHAR (JSON text)** — no intermediate ever holds variant, so it builds fine;
+> (2) a **post-hook macro does a direct `INSERT INTO <pre-created v3 target> SELECT …, CAST(json_parse(col) AS
+> variant), …`** with a `NOT EXISTS` idempotency guard. Step 2 reference impl:
+> `models/occurrences/digital_raw_occurrence_stg.sql` (materialized `table`, VARCHAR) +
+> `macros/promote_digital_raw_occurrence.sql` (post-hook) → `bronze.digital_raw_occurrence` (v3, pre-created by
+> `ddl/polaris/02`). Same shape reused for creative/gold. *(A per-target promote macro is verbose; generalize with
+> column introspection once the pattern is proven.)*
 
 ---
 

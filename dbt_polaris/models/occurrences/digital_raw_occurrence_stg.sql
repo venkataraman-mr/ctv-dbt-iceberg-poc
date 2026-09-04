@@ -1,53 +1,29 @@
 {#
-  Piece 1 — CTV staging -> raw occurrence (dbt-trino port of StagingToRawOccurrenceBisCtvUS).
-  POLARIS clone of dbt/models/bronze/digital_raw_occurrence.sql. Logic is IDENTICAL to the Nessie
-  version; the ONLY changes are the two VARIANT columns (daisy_chain, raw_json now write real
-  `variant` instead of VARCHAR) and format_version=3 on the target. Lives in occurrences/ per the
-  domain-folder rule (runbook §2).
-
-  Watermark-driven incremental read (mirrors the legacy version watermark + Delta table_changes):
-  the VERSION watermark (last_commit_version in silver.watermark_control) tracks the last staging
-  snapshot processed. Each run reads ONLY new inserts via Trino's system.table_changes between the
-  last processed snapshot (exclusive) and the current latest snapshot (inclusive) — no full scan.
-  The one exception is the very first run (watermark NULL): table_changes needs a start snapshot, so
-  we read the full current snapshot once, then record the watermark; every run after is incremental.
-  The watermark row 'BIS_CTV_US_INGESTION_STG_TO_RAW_OCC' must be seeded in watermark_control first
-  (ddl/polaris/03), with last_commit_version = NULL for the initial full load.
-
-  Fidelity notes (mirrors legacy exactly except where noted):
-    - creative_url_hash is NOT recomputed here — it is the precomputed exact Spark xxhash64(seed 42)
-      carried from the landing step (Trino's built-in xxhash64 uses seed 0 and can't match Spark).
-    - Dedup order key is the STAGING load timestamp (staging_loaded_at), standing in for the legacy
-      CDF _commit_timestamp: latest-landed row per occurrence id wins.
-    - Idempotency is the legacy LEFT ANTI JOIN on (provider_occurrence_id, capture_month) against
-      the target — kept alongside table_changes, exactly as legacy does.
-    - daisy_chain and raw_json are real Iceberg `variant` (v3), matching the source Databricks
-      bronze.digital_raw_occurrence VARIANT columns. raw_json = the original occurrence JSON as
-      variant; daisy_chain = the unifiedChain node as variant.
-    - Requires the Trino session time zone = UTC so captureDate parses to UTC (matches legacy).
+  Piece 1 — CTV staging -> raw occurrence (POLARIS). SPLIT into two hops because dbt-trino's
+  incremental strategy can't stage a `variant` column (its …__dbt_tmp intermediate isn't v3):
+    1. THIS model (digital_raw_occurrence_stg): the full staging->raw transform, but daisy_chain and
+       raw_json are kept as VARCHAR (JSON text). Materialized `table`, so each run holds only the
+       current watermark-limited batch (no intermediate variant relation -> no error).
+    2. post-hook promote_digital_raw_occurrence(): a DIRECT INSERT into the pre-created v3+VARIANT
+       bronze.digital_raw_occurrence, casting those two columns to `variant` (works because the target
+       is already v3 and no dbt intermediate is involved).
+  Logic is otherwise identical to the Nessie staging->raw model. Watermark-driven read (version
+  watermark 'BIS_CTV_US_INGESTION_STG_TO_RAW_OCC') unchanged; the final-table idempotency NOT EXISTS
+  moves into the promote macro.
 #}
 {%- set wm_name = 'BIS_CTV_US_INGESTION_STG_TO_RAW_OCC' -%}
 {%- set staging_src = source('bronze', 'digtial_raw_occurrence_ctv_staging') -%}
 {%- set wm = watermark_version_begin(wm_name, staging_src) -%}
 
-{#-
-  views_enabled=true (Polaris): the dbt-trino incremental intermediate relation must be a VIEW, not a
-  v2 Iceberg table. A v2 table can't hold `variant` ("Unsupported Hive type: variant"); a view just
-  carries the SELECT, so daisy_chain/raw_json flow as variant straight into the pre-created v3 target.
-  (Nessie forced this false because its native connector couldn't create views.)
--#}
 {{ config(
-    materialized='incremental',
-    incremental_strategy='append',
+    materialized='table',
     schema='bronze',
     tags=['bronze', 'BIS_CTV_BZ2FILE_TO_RAW_OCC'],
-    views_enabled=true,
-    post_hook="{{ watermark_version_finish('" ~ wm_name ~ "') }}",
-    properties={
-      'format_version': '3',
-      'partitioning': "ARRAY['capture_month']",
-      'sorted_by': "ARRAY['provider_occurrence_id']"
-    }
+    views_enabled=false,
+    post_hook=[
+      "{{ promote_digital_raw_occurrence() }}",
+      "{{ watermark_version_finish('" ~ wm_name ~ "') }}"
+    ]
 ) }}
 
 with staged as (
@@ -144,10 +120,10 @@ parsed as (
         json_extract_scalar(j, '$.occurrence.campaign.landingPage')                         as provider_campaign_landing_page,
         cast(null as varchar)                                                               as occurrence_description,
         cast(null as varchar)                                                               as occurrence_link_url,
-        cast(json_extract(j, '$.occurrence.unifiedChain') as variant)                       as daisy_chain,
+        json_format(json_extract(j, '$.occurrence.unifiedChain'))                           as daisy_chain,     -- VARCHAR (JSON text); cast to variant in the promote
         try(cast(json_extract_scalar(j, '$.occurrence.purchaseMethod') as integer))         as purchase_method_id,
         cast(null as varchar)                                                               as ad_insertion_point,
-        cast(json_parse(raw_json_text) as variant)                                          as raw_json,
+        raw_json_text                                                                       as raw_json,        -- VARCHAR (JSON text); cast to variant in the promote
         row_number() over (partition by occurrence_id order by staging_loaded_at desc)      as r_num
     from typed
 )
@@ -201,11 +177,3 @@ where r_num = 1
   and creative_mime_type = 'video/mp4'
   and publisher_id in (32734360, 33434701, 2945144, 2786484, 43838908, 38149324,
                        11019659, 29528950, 2947526, 29321129, 204389)
-{% if is_incremental() %}
-  and not exists (
-      select 1
-      from {{ this }} t
-      where t.provider_occurrence_id = f.provider_occurrence_id
-        and t.capture_month = f.capture_month
-  )
-{% endif %}
