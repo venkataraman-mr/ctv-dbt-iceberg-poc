@@ -252,8 +252,22 @@ table has a **VARIANT** column, the target Iceberg table must also be **VARIANT*
 applies across every piece that touches such columns — **ingestion, breaking-creative, creative-sync (future),
 and the gold occurrence flow**. Concretely: retire the current `VARIANT → VARCHAR/JSON` workaround; dbt models
 declare `variant` columns and write with `CAST(JSON '…' AS VARIANT)` (Trino) / native VARIANT (Spark), and read
-with `payload['key']` + `CAST`. This is only possible on a catalog that serves v3+VARIANT over REST (i.e., the
-catalog decision gates the dbt change).
+with `payload['key']` + `CAST` (**not** `json_query` — that errors on a variant). This is only possible on a
+catalog that serves v3+VARIANT over REST (i.e., the catalog decision gates the dbt change).
+
+> **Build caveats discovered while implementing v3+VARIANT on Trino (Polaris build, 2026-09).** These are **Trino**
+> limitations (not catalog-specific; version-dependent), surfaced during the real pipeline build:
+> - **A table with a `variant` column MUST NOT use `sorted_by`.** Trino's sort-on-write serializes every column
+>   (incl. the variant) through its legacy Hive-type mapping → `NOT_SUPPORTED "Unsupported Hive type: variant"` on
+>   any write. `partitioning` is fine. So a Databricks `CLUSTER BY (low, high)` becomes **partitioning-only** on the
+>   variant tables (drop the sort key). Perf-only loss.
+> - **`SMALLINT`/`TINYINT` → `INTEGER`** — Iceberg has no 8/16-bit int; the Trino Iceberg REST connector rejects
+>   `smallint`. The one unavoidable deviation from exact source-type parity.
+> - **PyIceberg (0.11.x) cannot write v3 at all**, so any PyIceberg-written table (e.g. schema-on-read reference
+>   mirrors, raw landing) stays **v2** — fine where there's no VARIANT. The Trino/dbt-written pipeline tables carry
+>   v3+VARIANT.
+> - A **single dbt-trino incremental model writes variant directly** (dbt puts `format_version=3` on its
+>   intermediate) — no VARCHAR-staging workaround needed, once `sorted_by` is removed.
 
 ---
 
