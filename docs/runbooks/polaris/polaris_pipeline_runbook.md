@@ -403,7 +403,11 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   ```
   > **✅ Step 2 validated (2026-09-04): 811,764 raw rows — exact Nessie parity — with `daisy_chain`/`raw_json` as
   > real `variant`.** The v3+VARIANT approach is proven end-to-end; the two rules below make Steps 3–6 mechanical.
-  > Read variants with `col['key']` + `CAST` (or `CAST(col AS json)`), never `json_query`.
+  > **Reading a variant column** (any consumer model, incl. Steps 3/5/6): use `col['key']` + `CAST`, or
+  > `CAST(col AS json)` when you need JSON for `json_extract_scalar`. **Never `json_parse(col)` or `json_query(col)`**
+  > — both want VARCHAR and fail on a variant (`Unexpected parameters (variant) for function json_parse`). The
+  > Nessie varchar idiom `json_extract_scalar(try(json_parse(raw_json)), '$.x')` becomes
+  > `json_extract_scalar(try(cast(raw_json as json)), '$.x')` on Polaris.
 
 **🔨 Step 3 — Creative push + first-seen/occ summary (Piece 3 A+B) — BUILT 2026-09-04 (not yet run).**
 - **8 dbt models** cloned to `dbt_polaris/models/creatives/` (Job A: `crtv_staging_candidate/excluded/final`,
@@ -427,6 +431,12 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   # once, on prod Postgres (SQL client, tempwork_admin_role): \i ddl/postgres/polaris/piece3_tempwork_ctv_poc_pol.sql
   docker compose exec dbt_polaris dbt run --select tag:RAW_OCCS_TO_CREATIVE_STAGING            # Job A
   docker compose exec dbt_polaris dbt run --select tag:CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY    # Job B
+  # -- OR both jobs in ONE parallel command (mirrors the legacy parallel jobs; no ref() edge between
+  #    them, so with >=2 threads Job A and Job B run concurrently). watermark_control is partitioned by
+  #    watermark_name so their watermark writes don't collide. Fully-parallel => a few occurrences may
+  #    park in missing_digital_occurrence_for_summary and resolve next cycle (intended; run sequentially
+  #    above if you want same-cycle resolution):
+  docker compose exec dbt_polaris dbt run --select tag:RAW_OCCS_TO_CREATIVE_STAGING tag:CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY --threads 4
   # verify (compare to the Nessie counts):
   docker exec -i trino trino --execute "SELECT count(*) FROM postgres.tempwork.creative_staging_ctv_poc_pol"
   docker exec -i trino trino --execute "SELECT count(*) FROM postgres.tempwork.creative_first_seen_ctv_poc_pol"
@@ -434,8 +444,9 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   docker exec -i trino trino --execute "SELECT count(*) FROM postgres.tempwork.creative_occurrence_summary_ctv_poc_pol"
   ```
   > **Verify when you run it:** (1) the Postgres `_pol` DDL applies clean (cloned PL/pgSQL); (2) Job A staged-creative
-  > count matches the Nessie run; (3) Job B first-seen + occ-summary counts match. No variant on this step, so none
-  > of the Step-2 variant gymnastics apply.
+  > count matches the Nessie run; (3) Job B first-seen + occ-summary counts match. Step 3 *writes* no variant, but it
+  > *reads* the variant `raw_json` from `digital_raw_occurrence` — fixed `crtv_staging_candidate` to
+  > `cast(raw_json as json)` (the Nessie `json_parse(raw_json)` fails on a variant). See the variant-read rule above.
 
 > ## ⚠️ VARIANT on Polaris — the ONE rule that matters (settled the hard way in Step 2)
 >

@@ -12,7 +12,7 @@
     * table_changes(tbl, v1, v2)  -> system.table_changes(schema,table,start_snap,end_snap) + the
       version-watermark first-run/no-change branches (engine needs a start snapshot; same as Piece 1).
     * ANTI JOIN                   -> LEFT JOIN ... WHERE key IS NULL (Trino has no ANTI JOIN keyword).
-    * raw_json:occurrence:x       -> json_extract_scalar(try(json_parse(raw_json)), '$.occurrence.x').
+    * raw_json:occurrence:x       -> json_extract_scalar(try(cast(raw_json as json)), '$.occurrence.x').
     * RLIKE                       -> regexp_like ; Nvl -> coalesce ; Regexp_extract -> regexp_extract.
     * substring_index(...)        -> {{ substring_index() }} macro (Spark SUBSTRING_INDEX; no Trino builtin).
     * boolean('false')            -> false.
@@ -198,9 +198,9 @@ cte_raw_occ as (
             when provider_code in ({{ source_playon_code }}, {{ source_bis_ctv_code }}) then concat(region_city_name, ', ', region_state_name)
             end as provider_dma_city_name,
         case
-            when regexp_like(json_extract_scalar(try(json_parse(raw_json)), '$.occurrence.creativeUrl'),
+            when regexp_like(json_extract_scalar(try(cast(raw_json as json)), '$.occurrence.creativeUrl'),
                              '^(https?://)([\w.-]+)(:[0-9]+)?(/.*)?$')
-            then json_extract_scalar(try(json_parse(raw_json)), '$.occurrence.creativeUrl')
+            then json_extract_scalar(try(cast(raw_json as json)), '$.occurrence.creativeUrl')
             else null
          end as occurrence_creative_url,
         case
@@ -210,7 +210,7 @@ cte_raw_occ as (
         end as attribution_status,
         case
             when provider_code = {{ source_bis_social_code }} then
-            coalesce(json_extract_scalar(try(json_parse(raw_json)), '$.occurrence.socialCampaignText'), '')
+            coalesce(json_extract_scalar(try(cast(raw_json as json)), '$.occurrence.socialCampaignText'), '')
             else null
         end as social_campaign_text
         from
