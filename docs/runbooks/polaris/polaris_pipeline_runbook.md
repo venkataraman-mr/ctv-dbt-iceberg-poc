@@ -1,7 +1,8 @@
 # Polaris pipeline runbook — parallel PoC (Nessie → Polaris)
 
 **Status: IN PROGRESS.** Base structure + **Step 1 (reference sync)** and **Step 2 (ingestion → raw occurrence)**
-built; Steps 3–6 pending (see §5 Build progress). This runbook is both the build + validation plan and the running
+DONE/VALIDATED (811,764 raw rows, exact Nessie parity). **Step 3 (creative push + first-seen/occ summary) BUILT**
+(2026-09-04) — not yet run. Steps 4–6 pending (see §5 Build progress). This runbook is both the build + validation plan and the running
 log. It stands the **whole CTV pipeline** (reference sync → ingestion → Pieces 1–5) up on **Apache Polaris**,
 running **in parallel** to the working Nessie pipeline on the same VM, so we can prove parity before the AWS build.
 
@@ -403,6 +404,38 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   > **✅ Step 2 validated (2026-09-04): 811,764 raw rows — exact Nessie parity — with `daisy_chain`/`raw_json` as
   > real `variant`.** The v3+VARIANT approach is proven end-to-end; the two rules below make Steps 3–6 mechanical.
   > Read variants with `col['key']` + `CAST` (or `CAST(col AS json)`), never `json_query`.
+
+**🔨 Step 3 — Creative push + first-seen/occ summary (Piece 3 A+B) — BUILT 2026-09-04 (not yet run).**
+- **8 dbt models** cloned to `dbt_polaris/models/creatives/` (Job A: `crtv_staging_candidate/excluded/final`,
+  `crtv_autochaff`, `crtv_autochaff_records`; Job B: `crtv_firstseen`, `crtv_occ_summary_candidate`,
+  `crtv_occ_summary_final`). Pure mechanical clone: `iceberg.`→`polaris.` literals and `_ctv_poc`→`_ctv_poc_pol`
+  (Postgres proc/tmp names). All are `table`-materialized bronze **scratch** (dropped on-run-end) — **no variant**,
+  so no v3/sorted_by concerns in the models.
+- **Macros fixed** — `crtv_push.sql` (id-block reservation) had functional Nessie refs
+  (`sp_reserve_creative_ids_ctv_poc`, `creative_id_block_ctv_poc`); all `dbt_polaris/macros/*` were repointed to
+  `_ctv_poc_pol` (+ a stale `iceberg.` comment fixed). *(Base-structure macro copy had missed these.)*
+- **DDL**: `ddl/polaris/04_bronze_creative.sql` — the 3 persistent bronze tables (`creative_unique_urls`,
+  `creative_autochaff`, `missing_digital_occurrence_for_summary`), **v3, no variant → `sorted_by` retained**;
+  `ddl/polaris/05_watermark_seeds_piece3.sql` — the 3 Job A/B version watermarks.
+- **Postgres**: `ddl/postgres/polaris/piece3_tempwork_ctv_poc_pol.sql` — clone of the Nessie Piece-3 bootstrap with
+  `_ctv_poc_pol` tables/procs/sequence (`creative_id_seq_ctv_poc_pol`, start 26B, separate object from Nessie's).
+  Real `creatives.*` reads unchanged (read-only). **Run once on prod Postgres (needs `tempwork_admin_role`).**
+- **Run (on the VM), after Step 2:**
+  ```bash
+  docker exec -i trino trino -f /dev/stdin < ddl/polaris/04_bronze_creative.sql          # bronze creative tables
+  docker exec -i trino trino -f /dev/stdin < ddl/polaris/05_watermark_seeds_piece3.sql    # Job A/B watermarks
+  # once, on prod Postgres (SQL client, tempwork_admin_role): \i ddl/postgres/polaris/piece3_tempwork_ctv_poc_pol.sql
+  docker compose exec dbt_polaris dbt run --select tag:RAW_OCCS_TO_CREATIVE_STAGING            # Job A
+  docker compose exec dbt_polaris dbt run --select tag:CREATIVE_FIRST_SEEN_AND_OCCS_SUMMARY    # Job B
+  # verify (compare to the Nessie counts):
+  docker exec -i trino trino --execute "SELECT count(*) FROM postgres.tempwork.creative_staging_ctv_poc_pol"
+  docker exec -i trino trino --execute "SELECT count(*) FROM postgres.tempwork.creative_first_seen_ctv_poc_pol"
+  docker exec -i trino trino --execute "SELECT count(*) FILTER (WHERE is_staged) FROM polaris.bronze.creative_unique_urls"
+  docker exec -i trino trino --execute "SELECT count(*) FROM postgres.tempwork.creative_occurrence_summary_ctv_poc_pol"
+  ```
+  > **Verify when you run it:** (1) the Postgres `_pol` DDL applies clean (cloned PL/pgSQL); (2) Job A staged-creative
+  > count matches the Nessie run; (3) Job B first-seen + occ-summary counts match. No variant on this step, so none
+  > of the Step-2 variant gymnastics apply.
 
 > ## ⚠️ VARIANT on Polaris — the ONE rule that matters (settled the hard way in Step 2)
 >

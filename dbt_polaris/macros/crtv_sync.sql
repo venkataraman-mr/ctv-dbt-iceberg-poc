@@ -17,7 +17,7 @@
   {% set start_ts = r[0]['s'] if r else none %}
   {% set start_ts_naive = (start_ts | string)[:19] if start_ts is not none else '1900-01-01 00:00:00' %}
   {{ return(pg_call(
-     "call tempwork.sp_dbx_creative_get_changes_for_databricks_ctv_poc('"
+     "call tempwork.sp_dbx_creative_get_changes_for_databricks_ctv_poc_pol('"
      ~ start_ts_naive ~ "," ~ arch_flag ~ "')")) }}
 {% endmacro %}
 
@@ -32,5 +32,5 @@
   {% set start_ts = r[0]['s'] if r else none %}
   {% set start_ts_naive = (start_ts | string)[:19] if start_ts is not none else '1900-01-01 00:00:00' %}
   {{ return(pg_call(
-     "call tempwork.sp_dbx_component_get_changes_for_databricks_ctv_poc('" ~ start_ts_naive ~ "')")) }}
+     "call tempwork.sp_dbx_component_get_changes_for_databricks_ctv_poc_pol('" ~ start_ts_naive ~ "')")) }}
 {% endmacro %}

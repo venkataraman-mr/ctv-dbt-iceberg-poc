@@ -1,6 +1,6 @@
 {#
   Watermark framework (Iceberg + Trino), ported from the legacy Databricks watermark_control.
-  ONE control table (iceberg.silver.watermark_control), one row per named process, shared by two
+  ONE control table (polaris.silver.watermark_control), one row per named process, shared by two
   styles — mirroring common/common_functions.py:
 
     * VERSION-based  (append-only sources, e.g. staging->raw): uses last_commit_version.
