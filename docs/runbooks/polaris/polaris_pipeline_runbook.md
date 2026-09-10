@@ -3,8 +3,11 @@
 **Status: IN PROGRESS.** Base structure + **Step 1 (reference sync)** and **Step 2 (ingestion → raw occurrence)**
 DONE/VALIDATED (811,764 raw rows, exact Nessie parity). **Step 3 (creative push + first-seen/occ summary) VALIDATED**
 (2026-09-09, sequential + parallel) and **Step 4 (seed production data → clones) VALIDATED** (2026-09-09).
-**Step 5 (creative sync-back, Piece 4b) BUILT** (2026-09-09) — 18 dbt models + gold/silver DDL + Postgres proc,
-**pending VM validation**. Step 6 (raw → gold occurrence, Piece 5) pending (see §5 Build progress). This runbook is both the build + validation plan and the running
+**Step 5 (creative sync-back, Piece 4b) VALIDATED** (2026-09-09) — 18 dbt models + gold/silver DDL + Postgres
+proc; full `tag:SYNC_CREATIVES_TO_ICEBERG` run green after 3 fixes (format_version on body-variant models;
+missing gold.digital_gold_occurrence; JSON '[]' empty-array literal). **Step 6 (raw → gold occurrence, Piece 5)
+BUILT** (2026-09-10) — 6 dbt models + gold-occurrence/staging DDL + Piece-5 watermarks + Postgres occ-id seq,
+**pending VM validation** (see §5 Build progress). This runbook is both the build + validation plan and the running
 log. It stands the **whole CTV pipeline** (reference sync → ingestion → Pieces 1–5) up on **Apache Polaris**,
 running **in parallel** to the working Nessie pipeline on the same VM, so we can prove parity before the AWS build.
 
@@ -527,6 +530,38 @@ type exceptions.** Files:
   `provider_raw_json` VARCHAR→VARIANT, market_id/purchase_method_id/origin_channel_id SMALLINT→INTEGER, v3,
   partitioning by capture_month, **no sorted_by**). Apply it, then re-run — Step 5 should complete (component +
   product-resync branches near-empty/no-op for CTV). This is the first Step-6 table, created early to unblock Step 5.
+
+**🟡 Step 6 — Raw → gold occurrence (Piece 5) — BUILT 2026-09-10, PENDING VM VALIDATION.** The final piece:
+`tag:DIGITAL_RAW_OCC_TO_GOLD_OCC`. Clone of the 6 Nessie Piece-5 models → `dbt_polaris/models/occurrences/` +
+the remaining DDL. Static audit (subagent) PASS on all checks (38/38 + 24/24 MERGE column parity; 25/25 UNION
+alignment; variant read/write; smallint; format_version; DAG). Files:
+- **`ddl/polaris/09_gold_occurrence.sql`** — `gold.digital_gold_occurrence` (created in the Step-5 fix; provider_raw_json
+  VARIANT, 3 smallint→integer, v3, partition capture_month, no sorted_by).
+- **`ddl/polaris/10_silver_digital_staging_occurrence.sql`** — the Piece-5 hold buffer (daisy_chain + provider_raw_json
+  VARIANT, purchase_method_id integer, v3, partition capture_month, no sorted_by).
+- **`ddl/polaris/11_silver_watermark_control_piece5.sql`** — 2 watermarks: DIGITAL_RAW_OCC_TO_GOLD_OCC (version, Half A),
+  DIGITAL_CRTV_CHANGES_TO_GOLD_OCC (timestamp, Half B).
+- **`ddl/postgres/polaris/piece5_occ_id_seq_ctv_poc.sql`** — the 75B occurrence-id sequence + reservation proc, `_ctv_poc_pol`
+  (the dbt_polaris `reserve_occurrence_ids` macro already calls the `_pol` proc). Run once on prod Postgres.
+- **6 dbt models** in `dbt_polaris/models/occurrences/`:
+  - `digital_occ_raw_cdf` (Half A stg1): version-watermark CDF read of bronze.digital_raw_occurrence; daisy_chain + raw_json
+    VARIANT pass through untouched → `format_version=3` on the body.
+  - `digital_occ_deploychain` (stg2): persists deployment_chain/role/mediator; reads daisy_chain via `cast(... as json)`
+    (3 places), writes purchase_method_id integer + daisy_chain variant to gold; `format_version=3`.
+  - `digital_occ_combined` (stg3): UNION raw + staging hold buffer. daisy_chain stays variant through the UNION; raw_json read
+    via `cast(raw_json as json)` (7 places); provider_raw_json kept VARCHAR here (raw = json_object; staging down-cast
+    `json_format(cast(... as json))`) so the UNION types match; `format_version=3`.
+  - `digital_occ_classified` (stg4 gate): scalar-only gold.creative reads; media_property_flatten_vx0_vw is a `source()` (real
+    view); daisy_chain passes through → `format_version=3`.
+  - `digital_occ_gold` (stg5 writer): reserves occ_ids from the `_pol` sequence; MERGEs gold (38 cols, provider_raw_json
+    cast varchar→variant) + park/release staging (provider_raw_json cast→variant, daisy_chain passthrough); 3 smallint→integer;
+    version-watermark finish. Body is VARCHAR → **no** format_version override.
+  - `digital_occ_crtv_changes` (Half B): scalar gold.creative reads; re-parent + delete_flag MERGEs into gold occurrence;
+    catalog-rename only.
+- **VM validation plan:** apply DDL 10/11 (09 already applied in Step 5), run the Postgres seq file once, `dbt parse`, then
+  `dbt run --select tag:DIGITAL_RAW_OCC_TO_GOLD_OCC`. Watch the two Polaris error classes (variant+sorted_by; smallint).
+  This is Piece 5 (Half A raw→gold + Half B creative-change reactions); with CTV data flowing it should populate
+  gold.digital_gold_occurrence and re-activate the Piece-4 last-seen/occ-id readers that no-op'd in Step 5.
 
 > ## ⚠️ VARIANT on Polaris — the ONE rule that matters (settled the hard way in Step 2)
 >
