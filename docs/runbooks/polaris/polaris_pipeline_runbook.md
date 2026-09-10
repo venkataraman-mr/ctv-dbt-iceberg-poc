@@ -3,7 +3,8 @@
 **Status: IN PROGRESS.** Base structure + **Step 1 (reference sync)** and **Step 2 (ingestion → raw occurrence)**
 DONE/VALIDATED (811,764 raw rows, exact Nessie parity). **Step 3 (creative push + first-seen/occ summary) VALIDATED**
 (2026-09-09, sequential + parallel) and **Step 4 (seed production data → clones) VALIDATED** (2026-09-09).
-Steps 5–6 pending (see §5 Build progress). This runbook is both the build + validation plan and the running
+**Step 5 (creative sync-back, Piece 4b) BUILT** (2026-09-09) — 18 dbt models + gold/silver DDL + Postgres proc,
+**pending VM validation**. Step 6 (raw → gold occurrence, Piece 5) pending (see §5 Build progress). This runbook is both the build + validation plan and the running
 log. It stands the **whole CTV pipeline** (reference sync → ingestion → Pieces 1–5) up on **Apache Polaris**,
 running **in parallel** to the working Nessie pipeline on the same VM, so we can prove parity before the AWS build.
 
@@ -468,6 +469,52 @@ ai_classification_staging, component_coding) from prod — the input Step 5 sync
   ```
   > NOTE: the `_pol` clone file was generated with `sed 's/_ctv_poc/_ctv_poc_pol/g'` (my sandbox bash was down for a
   > mount glitch during this step). Verify real `creatives.*`/`ml_results.*` refs are unsuffixed after generation.
+
+**🟡 Step 5 — Creative sync-back (Piece 4b) — BUILT 2026-09-09, PENDING VM VALIDATION.** Clone of the 18
+Nessie `SYNC_CREATIVES_TO_ICEBERG` dbt models → `dbt_polaris/models/creatives/` plus the supporting DDL + Postgres
+proc. Built entirely via Windows-side file edits (both my sandbox bash and the VM `sed` were unavailable for the
+local Windows repo). Motto held: **reuse the Nessie logic; change only the v3/VARIANT pieces + the two forced
+type exceptions.** Files:
+- **`ddl/polaris/06_gold_creative.sql`** — gold creative-family tables from Databricks `gold.py`. VARIANT (v3, **no
+  sorted_by**): `component_coding` (attribute_response, attribute_response_vx2), `creative` (12 cols: secondary_products,
+  vx1/vx2_secondary_products, mr_secondary_company_ids, attribution_competitor, attribution_celebrity, custom_attributes,
+  attribution_competitor_vx2, creative_payload, machine_learning_payload, print_matching_ads, print_ad_images),
+  `digital_deployment_chain` (daisy_chain). Non-variant tables (creative_first_seen, mediator, role, spend_availability)
+  keep sorted_by. **SMALLINT→INTEGER** on component_coding (template_id/sequence/share/page_no), creative_first_seen
+  (provider_id/market_id/daypart_id), digital_deployment_chain (purchase_method_id).
+- **`ddl/polaris/07_silver_pieces_4.sql`** — silver support tables from Databricks `silver.py`. VARIANT (v3, **no
+  sorted_by**): `creative_dedupe_map.json_response`, `creative_product_translation_resync_log`
+  (secondary_products/vx1/vx2_secondary_products/mr_secondary_company_ids), `gold_creative_change_log.json_log`. The two
+  translation-hold tables (id-only) keep sorted_by. (`digital_staging_occurrence` is a Piece-5 table — deferred to Step 6.)
+- **`ddl/polaris/08_silver_watermark_control_piece4.sql`** — the 10 timestamp watermarks (CTV_SYNC_CREATIVE,
+  CTV_SYNC_FIRST_SEEN, CTV_SYNC_DEDUP_UPSERT/DELETE, CTV_FSINFO_FROM_FIRSTSEEN/FROM_CREATIVE, CTV_FIRST_SEEN_OCC_ID,
+  CTV_LAST_SEEN_DIGITAL, CTV_SYNC_COMPONENT, CTV_PRODUCT_RESYNC). **Reminder: after seeding, run the one-time
+  CTV_PRODUCT_RESYNC init to `max(change_dt)`** (in the file footer) so its first run isn't a full-productmap scan.
+- **`ddl/postgres/polaris/piece4_sync_procs_ctv_poc.sql`** — the two get_changes procs (creative + component), bodies
+  verbatim, `_ctv_poc`→`_ctv_poc_pol` (proc names + tempwork clone tables). Postgres-only; run once on prod Postgres.
+- **18 dbt models** in `dbt_polaris/models/creatives/`. Transform rules applied:
+  1. literal `iceberg.`→`polaris.`; `source('tempwork', …_ctv_poc)`→`…_ctv_poc_pol` (macros were already cloned in
+     Step 3 — `crtv_sync.sql`/`watermark.sql` call the `_pol` procs; `sources.yml` maps the `_pol` clones).
+  2. **VARIANT writes** (VARCHAR-json → variant at the write site; the bronze staging tables stay VARCHAR):
+     `crtv_sync_creative` (12 gold cols via `cast(json_parse(x) as variant)`, celebrity via the guarded case,
+     mr_secondary `cast(null as variant)`, and `json_log` wrapped `cast(json_parse(cast(json_object(…) as varchar)) as
+     variant)`); `crtv_sync_dedupe_map` (`json_response` `cast(… as variant)` from Postgres jsonb→json); `comp_sync_revxlate`
+     (attribute_response/_vx2 via `cast(cast(array_agg(…) as json) as variant)`, so `comp_sync`'s `select *` writes
+     variant→variant); `crtv_product_resync` (gold vx1/vx2_secondary + the 4 resync-log variant cols).
+  3. **VARIANT reads** — `crtv_product_resync_affected` reads `gold.creative.secondary_products` (now variant) with
+     `cast(… as json)` (never `json_parse` on a variant), then **down-casts to VARCHAR json** so `_prim`/`_sec`/`_resync`
+     stay byte-for-byte Nessie.
+  4. **SMALLINT→INTEGER** where a Postgres `int2` would land in an intermediate Iceberg table: `crtv_sync_creative_raw`
+     (creative_tier_id/first_seen_market_id/first_seen_daypart_id), `crtv_sync_first_seen` (provider_id/market_id/daypart_id),
+     `comp_sync_revxlate` (component_template_id/sequence/share/page_no).
+  Scalar-only models (`crtv_fsinfo_update`, `crtv_lastseen_update`, `crtv_occid_update`) and the pure ref/source models
+  (`crtv_product_resync_prim`/`_sec`, `crtv_sync_creative_revxlate`) are catalog-rename-only or verbatim.
+- **VM validation plan (not yet run):** (1) apply DDL 06/07/08 + the CTV_PRODUCT_RESYNC init + the two gold
+  ADD-COLUMN retrofits noted in 06; (2) run the Postgres proc file once; (3) `dbt_polaris dbt parse`; (4) run
+  `tag:SYNC_CREATIVES_TO_ICEBERG` in DAG order (dbt handles it via refs). Watch for the two known Polaris error
+  classes: `Unsupported Hive type: variant` (a stray `sorted_by` on a variant table) and `Type not supported for
+  Iceberg: smallint` (a missed int2 cast). The component + product-resync + Piece-5-gated paths are near-empty/no-op
+  for CTV now (validate fully after Step 6 populates gold occurrence).
 
 > ## ⚠️ VARIANT on Polaris — the ONE rule that matters (settled the hard way in Step 2)
 >
