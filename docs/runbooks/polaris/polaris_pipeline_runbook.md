@@ -1,8 +1,8 @@
 # Polaris pipeline runbook — parallel PoC (Nessie → Polaris)
 
 **Status: IN PROGRESS.** Base structure + **Step 1 (reference sync)** and **Step 2 (ingestion → raw occurrence)**
-DONE/VALIDATED (811,764 raw rows, exact Nessie parity). **Step 3 (creative push + first-seen/occ summary) BUILT**
-(2026-09-04) — not yet run. Steps 4–6 pending (see §5 Build progress). This runbook is both the build + validation plan and the running
+DONE/VALIDATED (811,764 raw rows, exact Nessie parity). **Step 3 (creative push + first-seen/occ summary) VALIDATED**
+(2026-09-09, sequential + parallel). Steps 4–6 pending (see §5 Build progress). This runbook is both the build + validation plan and the running
 log. It stands the **whole CTV pipeline** (reference sync → ingestion → Pieces 1–5) up on **Apache Polaris**,
 running **in parallel** to the working Nessie pipeline on the same VM, so we can prove parity before the AWS build.
 
@@ -409,7 +409,10 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   > Nessie varchar idiom `json_extract_scalar(try(json_parse(raw_json)), '$.x')` becomes
   > `json_extract_scalar(try(cast(raw_json as json)), '$.x')` on Polaris.
 
-**🔨 Step 3 — Creative push + first-seen/occ summary (Piece 3 A+B) — BUILT 2026-09-04 (not yet run).**
+**✅ Step 3 — Creative push + first-seen/occ summary (Piece 3 A+B) — VALIDATED 2026-09-09** (ran green both
+sequentially and via the single parallel command; the parallel re-run was a no-op since the watermarks had already
+advanced). One fix during the run: `crtv_staging_candidate` read the variant `raw_json` via `json_parse` → changed
+to `cast(raw_json as json)` (consumer-side variant rule).
 - **8 dbt models** cloned to `dbt_polaris/models/creatives/` (Job A: `crtv_staging_candidate/excluded/final`,
   `crtv_autochaff`, `crtv_autochaff_records`; Job B: `crtv_firstseen`, `crtv_occ_summary_candidate`,
   `crtv_occ_summary_final`). Pure mechanical clone: `iceberg.`→`polaris.` literals and `_ctv_poc`→`_ctv_poc_pol`
@@ -447,6 +450,22 @@ variant natively in-model. Reading: `col['key']` / `CAST`. This replaces the Nes
   > count matches the Nessie run; (3) Job B first-seen + occ-summary counts match. Step 3 *writes* no variant, but it
   > *reads* the variant `raw_json` from `digital_raw_occurrence` — fixed `crtv_staging_candidate` to
   > `cast(raw_json as json)` (the Nessie `json_parse(raw_json)` fails on a variant). See the variant-read rule above.
+
+**🔨 Step 4 — Seed production data → clones (Piece 4a) — BUILT 2026-09-09 (not yet run).** Postgres-only (no dbt /
+Iceberg): the PoC stand-in for the external classification engine. Clone of
+`ddl/postgres/nessie/piece4_seed_tempwork_ctv_poc.sql` → `ddl/postgres/polaris/piece4_seed_tempwork_ctv_poc_pol.sql`
+(`_ctv_poc`→`_ctv_poc_pol`; real `creatives.*`/`ml_results.*`/`config.*` reads untouched). Seeds the read-side
+`*_ctv_poc_pol` clones (creative, creative_product/celebrity/competitor, dedupe_map, CE-holding,
+ai_classification_staging, component_coding) from prod — the input Step 5 sync-back reads. Clone ids matched to
+`creative_staging_ctv_poc_pol` (reserved `>= 26B`).
+- **Run (once, on prod Postgres — SQL client, `tempwork_admin_role`):**
+  ```sql
+  \i ddl/postgres/polaris/piece4_seed_tempwork_ctv_poc_pol.sql
+  CALL tempwork.sp_seed_creative_clones_ctv_poc_pol('ALL');   -- Mode 1 (new) + Mode 2 (updates), watermark-driven
+  SELECT watermark_name, tx_status, tx_message, tx_datetime FROM tempwork.watermark_control_ctv_poc_pol;
+  ```
+  > NOTE: the `_pol` clone file was generated with `sed 's/_ctv_poc/_ctv_poc_pol/g'` (my sandbox bash was down for a
+  > mount glitch during this step). Verify real `creatives.*`/`ml_results.*` refs are unsuffixed after generation.
 
 > ## ⚠️ VARIANT on Polaris — the ONE rule that matters (settled the hard way in Step 2)
 >
