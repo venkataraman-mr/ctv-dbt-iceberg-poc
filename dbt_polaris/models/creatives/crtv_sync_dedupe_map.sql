@@ -56,8 +56,12 @@ when not matched then insert ({{ cols | join(', ') }})
     schema='bronze',
     tags=['creatives', 'SYNC_CREATIVES_TO_ICEBERG'],
     views_enabled=false,
-    post_hook=[merge_sql, wm_finish]
+    post_hook=[merge_sql, wm_finish],
+    properties={'format_version': '3'}
 ) }}
+{#- format_version=3 (NO sorted_by): this model's OWN body emits a VARIANT column (json_response), so the
+    dbt CTAS creates a v3 Iceberg table. Without it the create is v2 and Polaris rejects the transaction
+    ("Failed to create transaction"). -#}
 
 select
     cast(cdm.creative_dedupe_map_id   as bigint)                     as creative_dedupe_map_id,

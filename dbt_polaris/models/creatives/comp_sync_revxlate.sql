@@ -25,7 +25,10 @@
 {%- set fs       = source('tempwork', 'component_coding_forsync_tmp_ctv_poc_pol') -%}
 {%- set mattress = source('productcentral', 'vx0_vx2_mattress_product_mapping') -%}
 
-{{ config(materialized='table', schema='bronze', tags=['creatives', 'SYNC_CREATIVES_TO_ICEBERG'], views_enabled=false, on_table_exists='drop') }}
+{{ config(materialized='table', schema='bronze', tags=['creatives', 'SYNC_CREATIVES_TO_ICEBERG'], views_enabled=false, on_table_exists='drop', properties={'format_version': '3'}) }}
+{#- format_version=3 (NO sorted_by): this model's OWN body emits VARIANT columns (attribute_response,
+    attribute_response_vx2), so the dbt CTAS must create a v3 Iceberg table. Without it the create is v2 and
+    Polaris rejects the transaction ("Failed to create transaction"). -#}
 
 -- per component: the manufacturer's vx2_code + advert product -> mattress cmp_seq
 with comp_mfr as (

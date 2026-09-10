@@ -515,6 +515,10 @@ type exceptions.** Files:
   classes: `Unsupported Hive type: variant` (a stray `sorted_by` on a variant table) and `Type not supported for
   Iceberg: smallint` (a missed int2 cast). The component + product-resync + Piece-5-gated paths are near-empty/no-op
   for CTV now (validate fully after Step 6 populates gold occurrence).
+- **FIX (first VM run, 2026-09-09):** `crtv_sync_dedupe_map` failed with `ICEBERG_CATALOG_ERROR "Failed to
+  create transaction"` — its body emits a variant column but its `config()` didn't force v3. Added
+  `properties={'format_version': '3'}` to it and to `comp_sync_revxlate` (the other body-variant model). See
+  the VARIANT-rule COROLLARY below. `crtv_sync_first_seen` (35,623 rows) proved the rest of the stack is sound.
 
 > ## ⚠️ VARIANT on Polaris — the ONE rule that matters (settled the hard way in Step 2)
 >
@@ -538,6 +542,16 @@ type exceptions.** Files:
 > run-operation promote" theory was **wrong** — every one of those failures was actually the `sorted_by` on the
 > target. So: keep the model as a plain incremental model with the variant `CAST`s inline; just **omit `sorted_by`**
 > on any table that has a variant column.
+>
+> **COROLLARY (found in Step 5, `crtv_sync_dedupe_map` / `comp_sync_revxlate`): a dbt model whose OWN body
+> emits a variant column must set `properties={'format_version': '3'}` in its `config()`.** dbt's CTAS
+> defaults to Iceberg **v2**, and creating a v2 table with a variant column makes Polaris reject the commit:
+> `ICEBERG_CATALOG_ERROR "Failed to create transaction"`. This is the *table-create* analog of the sorted_by
+> rule. Note the distinction: models that only WRITE variant in a **post_hook** to a gold/silver table
+> (`crtv_sync_creative`, `comp_sync`, `crtv_product_resync`, `crtv_sync_dedupe_map`'s own merge target) do
+> **not** need it — those targets are pre-created v3 by `ddl/polaris/06`/`07`. Only the models whose
+> materialized body table itself carries a variant column do. (`crtv_sync_first_seen` has no body variant, so
+> it built fine at v2 — that's how we isolated this.)
 >
 > **Step 2 reference impl:** `models/occurrences/digital_raw_occurrence.sql` (single incremental model, variant
 > casts inline, `format_version=3` + `partitioning` only) → `bronze.digital_raw_occurrence` (pre-created by
