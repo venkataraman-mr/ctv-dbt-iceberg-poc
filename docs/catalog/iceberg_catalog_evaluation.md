@@ -255,19 +255,29 @@ declare `variant` columns and write with `CAST(JSON '…' AS VARIANT)` (Trino) /
 with `payload['key']` + `CAST` (**not** `json_query` — that errors on a variant). This is only possible on a
 catalog that serves v3+VARIANT over REST (i.e., the catalog decision gates the dbt change).
 
-> **Build caveats discovered while implementing v3+VARIANT on Trino (Polaris build, 2026-09).** These are **Trino**
-> limitations (not catalog-specific; version-dependent), surfaced during the real pipeline build:
-> - **A table with a `variant` column MUST NOT use `sorted_by`.** Trino's sort-on-write serializes every column
->   (incl. the variant) through its legacy Hive-type mapping → `NOT_SUPPORTED "Unsupported Hive type: variant"` on
->   any write. `partitioning` is fine. So a Databricks `CLUSTER BY (low, high)` becomes **partitioning-only** on the
->   variant tables (drop the sort key). Perf-only loss.
+> **Build caveats discovered while implementing v3+VARIANT on Trino (full Polaris build, 2026-09 — all 6 pipeline
+> steps complete).** Mostly **Trino** limitations (not catalog-specific; version-dependent), surfaced during the
+> real pipeline build. The **biggest** is the first — losing `sorted_by` on every VARIANT table:
+> - **A table with a `variant` column MUST NOT use `sorted_by` — the biggest impact.** Trino's sort-on-write
+>   serializes every column (incl. the variant) through its legacy Hive-type mapping →
+>   `NOT_SUPPORTED "Unsupported Hive type: variant"` on any write. `partitioning` is fine. So a Databricks
+>   `CLUSTER BY (low, high)` becomes **partitioning-only** on every variant table (drop the sort key) — a genuine
+>   file-clustering/perf feature loss on large tables, though correctness and partition pruning are unaffected.
 > - **`SMALLINT`/`TINYINT` → `INTEGER`** — Iceberg has no 8/16-bit int; the Trino Iceberg REST connector rejects
 >   `smallint`. The one unavoidable deviation from exact source-type parity.
-> - **PyIceberg (0.11.x) cannot write v3 at all**, so any PyIceberg-written table (e.g. schema-on-read reference
->   mirrors, raw landing) stays **v2** — fine where there's no VARIANT. The Trino/dbt-written pipeline tables carry
->   v3+VARIANT.
-> - A **single dbt-trino incremental model writes variant directly** (dbt puts `format_version=3` on its
->   intermediate) — no VARCHAR-staging workaround needed, once `sorted_by` is removed.
+> - **PyIceberg (0.11.x) cannot write VARIANT — nor v3 at all** ([iceberg-python #1819](https://github.com/apache/iceberg-python/issues/1819)),
+>   so the write path lands VARIANT columns as **string** and the first dbt model `CAST`s to `variant`; any
+>   PyIceberg-written table (reference mirrors, raw landing) stays **v2** — fine where there's no VARIANT. The
+>   Trino/dbt-written pipeline tables carry v3+VARIANT.
+> - A **single dbt-trino model writes variant directly** (no VARCHAR-staging workaround), **but** a `table`/`incremental`
+>   model whose **body** emits a variant column must set `properties={'format_version':'3'}` in its config — dbt's CTAS
+>   defaults to v2 and a v2-create-with-variant is rejected (`ICEBERG_CATALOG_ERROR "Failed to create transaction"`).
+> - **Variant read/write idioms:** read a variant with `CAST(col AS json)` or `col['key']` (never `json_parse`/
+>   `json_query` — they want VARCHAR); write VARCHAR-json into a variant column with `cast(json_parse(x) as variant)`;
+>   and use the JSON literal `JSON '[]'` for an empty array (`cast('[]' as json)` makes the json *string* `"[]"`, which
+>   fails `cast(... as array(json))`).
+> - **Trino v3 is still flagged "experimental"** — all of the above (incl. `MERGE`/`UPDATE`/`DELETE` on v3+VARIANT at
+>   pipeline scale) passed, but re-check on Trino upgrades.
 
 ---
 

@@ -1,15 +1,15 @@
 # Polaris pipeline runbook — parallel PoC (Nessie → Polaris)
 
-**Status: IN PROGRESS.** Base structure + **Step 1 (reference sync)** and **Step 2 (ingestion → raw occurrence)**
-DONE/VALIDATED (811,764 raw rows, exact Nessie parity). **Step 3 (creative push + first-seen/occ summary) VALIDATED**
-(2026-09-09, sequential + parallel) and **Step 4 (seed production data → clones) VALIDATED** (2026-09-09).
-**Step 5 (creative sync-back, Piece 4b) VALIDATED** (2026-09-09) — 18 dbt models + gold/silver DDL + Postgres
-proc; full `tag:SYNC_CREATIVES_TO_ICEBERG` run green after 3 fixes (format_version on body-variant models;
-missing gold.digital_gold_occurrence; JSON '[]' empty-array literal). **Step 6 (raw → gold occurrence, Piece 5)
-BUILT** (2026-09-10) — 6 dbt models + gold-occurrence/staging DDL + Piece-5 watermarks + Postgres occ-id seq,
-**pending VM validation** (see §5 Build progress). This runbook is both the build + validation plan and the running
-log. It stands the **whole CTV pipeline** (reference sync → ingestion → Pieces 1–5) up on **Apache Polaris**,
-running **in parallel** to the working Nessie pipeline on the same VM, so we can prove parity before the AWS build.
+**Status: COMPLETE — all 6 steps VALIDATED on the VM (through 2026-09-10). The full CTV pipeline runs green on
+Apache Polaris**, in parallel to the working Nessie pipeline on the same VM, with **v3 + real VARIANT throughout**
+and exact Nessie row-count parity (Step 2: 811,764 raw rows). Reference sync → ingestion → Piece 1 (raw occ) →
+Piece 3 (creative push / first-seen) → Piece 4 (creative sync-back) → Piece 5 (raw → gold occurrence) all pass.
+
+> **👉 Read the [Key learnings](#key-learnings) section first** — the headline of what worked, what had to change
+> vs. Nessie, and the **Polaris/Trino limitations** (the big one: losing `sorted_by` on every VARIANT table;
+> PyIceberg can't write VARIANT; `SMALLINT`→`INTEGER`). The per-step build log with commands + fixes is §5.
+
+This runbook is both the build/validation plan and the running log.
 
 - Catalog decision: **Polaris** (leads confirmed for the AWS non-prod build) — see
   [`../../catalog/iceberg_catalog_evaluation.md`](../../catalog/iceberg_catalog_evaluation.md).
@@ -26,6 +26,87 @@ running **in parallel** to the working Nessie pipeline on the same VM, so we can
 > change for Polaris is v3 + VARIANT** (data-type parity with the source Databricks tables). Expect only **minor**
 > dbt tweaks (catalog binding, the VARIANT read/write patterns) — the core logic is intact. This is a
 > catalog + data-type migration, **not** a re-implementation.
+
+---
+
+<a id="key-learnings"></a>
+## Key learnings — what worked, what didn't, and the limitations
+
+The whole point of this PoC was to prove **v3 + real VARIANT** on Apache Polaris (served via Trino 483 / dbt-trino,
+PyIceberg for landing). It works end-to-end, but VARIANT on this stack comes with real constraints — the most
+important being that **you cannot keep `sorted_by` on any table that has a VARIANT column**. This section is the
+executive summary; the per-step detail is in §5 and the deep-dive rules are in the §5 gotcha block and §8.
+
+### ✅ What worked
+
+- **v3 + real VARIANT, end-to-end, at scale.** All 6 pieces run green with real `variant` columns (not the
+  Nessie VARCHAR/JSON workaround). Step 2 landed **811,764 raw rows — exact Nessie parity** with `daisy_chain` /
+  `raw_json` as real `variant`; Pieces 4 & 5 write the VARIANT-heavy `gold.creative` / `gold.digital_gold_occurrence`.
+- **Trino/dbt write VARIANT natively.** `CAST(<json> AS variant)` in a dbt model materializes VARIANT in Iceberg.
+  A **plain** dbt model (incremental *or* `table`) writes it — no special staging/promote step is needed.
+- **Row-level DML on v3 + VARIANT works.** `MERGE` / `UPDATE` / `DELETE` (the backbone of Pieces 4 & 5) all run on
+  v3 tables with VARIANT columns sitting alongside the MERGE keys.
+- **`partitioning` is fully supported** on VARIANT tables (it's only `sorted_by` that breaks — see below).
+- **Real Iceberg views.** Polaris hosts Iceberg views, so Nessie's ephemeral-model view fakery
+  (`media_property_flatten_vx0_vw`) became a real view declared as a `source()`.
+- **Clean parallel isolation.** The `_ctv_poc_pol` Postgres clones + separate id sequences + per-catalog watermarks
+  let the Polaris run sit beside the Nessie run with no interference and an apples-to-apples parity diff.
+
+### 🔧 What had to change vs. Nessie (only the v3/VARIANT-driven edits — logic is otherwise byte-for-byte)
+
+- **Dropped `sorted_by` on every VARIANT table** (limitation ①). The legacy Databricks `CLUSTER BY` becomes
+  partitioning-only.
+- **Ingestion lands VARIANT as string; dbt CASTs to `variant`** (limitation ②) — PyIceberg can't write VARIANT.
+- **`SMALLINT`/`TINYINT` → `INTEGER`** everywhere (limitation ③).
+- **`format_version=3` added to the config of any dbt model whose *body* emits a VARIANT column** (limitation ④).
+- **VARIANT read idiom:** `json_parse(col)` / `json_query(col)` → `CAST(col AS json)` or `col['key']` (limitation ⑤).
+- **Empty-array literal:** `cast('[]' as json)` → `JSON '[]'` (limitation ⑥).
+
+### ⛔ Limitations of v3 + VARIANT on the Polaris / Trino / PyIceberg stack
+
+① **No `sorted_by` on any VARIANT table — the biggest impact.** Trino's sort-on-write serializes *every* column
+  (including the variant) through its legacy Hive-type mapping, which doesn't know `variant` →
+  `NOT_SUPPORTED "Unsupported Hive type: variant"` on **any** write (INSERT/CTAS/MERGE). Proven: the same
+  811,764-row insert **succeeds** into a `partitioning`-only table and **fails** the instant `sorted_by` is added
+  (even sorting by a non-variant column). **Impact:** we lose the file-level clustering/sort feature on every
+  VARIANT table (`gold.creative`, `bronze.digital_raw_occurrence`, `digital_deployment_chain`,
+  `digital_gold_occurrence`, the silver support tables, …). It is **perf-only** — correctness and partition pruning
+  are unaffected — but it's a genuine feature loss for large tables. It is a **Trino** limitation (not Polaris; the
+  REST catalog serves v3+variant fine), so it's **not catalog-specific** and is **version-dependent** — a newer
+  Trino that handles `variant` in the sorted-write path would let `sorted_by` return.
+
+② **PyIceberg cannot write VARIANT (any released version).** `VariantType` is still open under the V3 tracking
+  issue ([iceberg-python #1819](https://github.com/apache/iceberg-python/issues/1819)); no version has it, so a
+  bump won't help. Consequence: the ingestion **landing** writer lands VARIANT-origin columns as **string/JSON
+  text**, and the **first dbt model CASTs to `variant`** (Trino write path). Separately, **PyIceberg 0.11.1 can't
+  write v3 metadata at all** (`NotImplementedError` on `TableMetadataV3.model_dump_json`) — so the PyIceberg-written
+  reference/spend mirrors stay **v2** (they have no VARIANT, and in prod that data is read from Databricks, not
+  synced, so it's moot).
+
+③ **No 8/16-bit integers.** Iceberg has no `smallint`/`tinyint`, and the Trino Iceberg REST connector rejects them
+  (`Type not supported for Iceberg: smallint`). Every `SMALLINT`/`TINYINT` source column maps to `INTEGER` — the
+  **one place we can't match the source Databricks type exactly** (values fit, so it's safe). Nessie's *native*
+  connector accepted `smallint`, which is why `ddl/nessie/*` used it.
+
+④ **dbt CTAS defaults to Iceberg v2.** A `table`/`incremental` model whose **own body** emits a VARIANT column must
+  set `properties={'format_version': '3'}` in `config()`, or the create is v2 and Polaris rejects the commit
+  (`ICEBERG_CATALOG_ERROR "Failed to create transaction"`). Models that only write VARIANT in a **post_hook** to a
+  pre-created v3 table don't need it.
+
+⑤ **VARIANT read syntax is restricted.** You can't `json_parse(col)` or `json_query(col)` on a variant (both want
+  VARCHAR → `Unexpected parameters (variant) for function json_parse`). Read with `CAST(col AS json)` (for
+  `json_extract_scalar` / `unnest`) or `col['key']` + `CAST`. The Nessie idiom
+  `json_extract_scalar(try(json_parse(raw_json)), '$.x')` becomes `json_extract_scalar(try(cast(raw_json as json)), '$.x')`.
+
+⑥ **`cast('<literal>' as json)` doesn't parse.** Casting a VARCHAR *literal* to `json` wraps it as a json **string**
+  (`"[]"`), not a value — `cast('[]' as json)` then fails `cast(... as array(json))`. Use the JSON literal
+  `JSON '[]'` for an empty array. (Casting a **variant** column to json is fine — that's a real value.)
+
+⑦ **Trino v3 is still flagged "experimental."** Everything above passed at pipeline scale, but v3 DML is not yet
+  GA in Trino — worth re-checking on Trino upgrades.
+
+⑧ **Minor / cosmetic.** New Polaris tables get a UUID suffix on their S3 path (`iceberg.unique-table-location`,
+  cosmetic); `DROP` needs `DROP_WITH_PURGE_ENABLED` to purge S3 files.
 
 ---
 
@@ -473,7 +554,8 @@ ai_classification_staging, component_coding) from prod — the input Step 5 sync
   > NOTE: the `_pol` clone file was generated with `sed 's/_ctv_poc/_ctv_poc_pol/g'` (my sandbox bash was down for a
   > mount glitch during this step). Verify real `creatives.*`/`ml_results.*` refs are unsuffixed after generation.
 
-**🟡 Step 5 — Creative sync-back (Piece 4b) — BUILT 2026-09-09, PENDING VM VALIDATION.** Clone of the 18
+**✅ Step 5 — Creative sync-back (Piece 4b) — VALIDATED 2026-09-10** (full `tag:SYNC_CREATIVES_TO_ICEBERG` run
+green after the 3 fixes below). Clone of the 18
 Nessie `SYNC_CREATIVES_TO_ICEBERG` dbt models → `dbt_polaris/models/creatives/` plus the supporting DDL + Postgres
 proc. Built entirely via Windows-side file edits (both my sandbox bash and the VM `sed` were unavailable for the
 local Windows repo). Motto held: **reuse the Nessie logic; change only the v3/VARIANT pieces + the two forced
@@ -531,7 +613,8 @@ type exceptions.** Files:
   partitioning by capture_month, **no sorted_by**). Apply it, then re-run — Step 5 should complete (component +
   product-resync branches near-empty/no-op for CTV). This is the first Step-6 table, created early to unblock Step 5.
 
-**🟡 Step 6 — Raw → gold occurrence (Piece 5) — BUILT 2026-09-10, PENDING VM VALIDATION.** The final piece:
+**✅ Step 6 — Raw → gold occurrence (Piece 5) — VALIDATED 2026-09-10** (`tag:DIGITAL_RAW_OCC_TO_GOLD_OCC` ran
+green; `gold.digital_gold_occurrence` populated). The final piece:
 `tag:DIGITAL_RAW_OCC_TO_GOLD_OCC`. Clone of the 6 Nessie Piece-5 models → `dbt_polaris/models/occurrences/` +
 the remaining DDL. Static audit (subagent) PASS on all checks (38/38 + 24/24 MERGE column parity; 25/25 UNION
 alignment; variant read/write; smallint; format_version; DAG). Files:
