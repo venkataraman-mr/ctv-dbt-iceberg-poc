@@ -2,7 +2,8 @@
 
 **Status: IN PROGRESS.** Base structure + **Step 1 (reference sync)** and **Step 2 (ingestion → raw occurrence)**
 DONE/VALIDATED (811,764 raw rows, exact Nessie parity). **Step 3 (creative push + first-seen/occ summary) VALIDATED**
-(2026-09-09, sequential + parallel). Steps 4–6 pending (see §5 Build progress). This runbook is both the build + validation plan and the running
+(2026-09-09, sequential + parallel) and **Step 4 (seed production data → clones) VALIDATED** (2026-09-09).
+Steps 5–6 pending (see §5 Build progress). This runbook is both the build + validation plan and the running
 log. It stands the **whole CTV pipeline** (reference sync → ingestion → Pieces 1–5) up on **Apache Polaris**,
 running **in parallel** to the working Nessie pipeline on the same VM, so we can prove parity before the AWS build.
 
@@ -451,7 +452,8 @@ to `cast(raw_json as json)` (consumer-side variant rule).
   > *reads* the variant `raw_json` from `digital_raw_occurrence` — fixed `crtv_staging_candidate` to
   > `cast(raw_json as json)` (the Nessie `json_parse(raw_json)` fails on a variant). See the variant-read rule above.
 
-**🔨 Step 4 — Seed production data → clones (Piece 4a) — BUILT 2026-09-09 (not yet run).** Postgres-only (no dbt /
+**✅ Step 4 — Seed production data → clones (Piece 4a) — VALIDATED 2026-09-09** (seeding ran as expected;
+`_pol` clone generated via `sed` + synced local↔VM). Postgres-only (no dbt /
 Iceberg): the PoC stand-in for the external classification engine. Clone of
 `ddl/postgres/nessie/piece4_seed_tempwork_ctv_poc.sql` → `ddl/postgres/polaris/piece4_seed_tempwork_ctv_poc_pol.sql`
 (`_ctv_poc`→`_ctv_poc_pol`; real `creatives.*`/`ml_results.*`/`config.*` reads untouched). Seeds the read-side
