@@ -40,8 +40,10 @@ crtv as (
         creative_id, legacy_creative_id, creative_url_hash, primary_product_id, mr_company_id,
         vx1_product_id, vx2_product_id, secondary_products, vx1_secondary_products, vx2_secondary_products,
         transform(
-            -- secondary_products is VARIANT on Polaris: read via cast(... as json), NOT json_parse
-            cast(coalesce(cast(secondary_products as json), cast('[]' as json)) as array(json)),
+            -- secondary_products is VARIANT on Polaris: read via cast(... as json), NOT json_parse.
+            -- Empty-array fallback must be the JSON literal `JSON '[]'` (a real json array) -- NOT
+            -- cast('[]' as json), which yields the json STRING "[]" and fails cast to array(json).
+            cast(coalesce(cast(secondary_products as json), JSON '[]') as array(json)),
             x -> cast(json_extract_scalar(x, '$.product_id') as bigint)
         ) as sec_pid_array
     from polaris.gold.creative
