@@ -519,6 +519,14 @@ type exceptions.** Files:
   create transaction"` — its body emits a variant column but its `config()` didn't force v3. Added
   `properties={'format_version': '3'}` to it and to `comp_sync_revxlate` (the other body-variant model). See
   the VARIANT-rule COROLLARY below. `crtv_sync_first_seen` (35,623 rows) proved the rest of the stack is sound.
+- **FIX #2 (second VM run, 2026-09-09):** after the format_version fix, 12 models passed (incl. the big variant
+  gold MERGE `crtv_sync_creative` and `crtv_sync_dedupe_map`/`comp_sync` variant tables). Failed at
+  `crtv_occid_update`: `TABLE_NOT_FOUND polaris.gold.digital_gold_occurrence`. That table is the **Piece-5**
+  gold occurrence target — the two Piece-5-gated readers (`crtv_occid_update`, `crtv_lastseen_update`) need it
+  to exist to no-op. Created **`ddl/polaris/09_gold_occurrence.sql`** (clone of `ddl/nessie/07_gold_occurrence.sql`:
+  `provider_raw_json` VARCHAR→VARIANT, market_id/purchase_method_id/origin_channel_id SMALLINT→INTEGER, v3,
+  partitioning by capture_month, **no sorted_by**). Apply it, then re-run — Step 5 should complete (component +
+  product-resync branches near-empty/no-op for CTV). This is the first Step-6 table, created early to unblock Step 5.
 
 > ## ⚠️ VARIANT on Polaris — the ONE rule that matters (settled the hard way in Step 2)
 >
