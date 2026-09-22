@@ -26,3 +26,4 @@ dbt/.user.yml
 dbt_polaris/.user.yml
 # checkpoint build artifacts (house-styled docx) — do not commit
 docs/*.docx
+Claude outputs/
