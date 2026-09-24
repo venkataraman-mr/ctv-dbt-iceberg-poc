@@ -255,6 +255,50 @@ cutovers so mutation and update/delete CDC stay where they work and Trino does w
 
 ---
 
+## 10. Operational finding (2026-09-22) — stale metadata cache → deletion-vector read errors on hot UC tables, RESOLVED
+
+**Symptom.** Reading a continuously-CDC'd UC-managed Iceberg table (`unity_catalog.productcentral.productmap`,
+DV-enabled, merged constantly) from Trino failed **intermittently** with
+`Failed to read deletion vector file: abfss://…/deletion_vector_….bin`, and results were inconsistent
+run-to-run. `SELECT` succeeded some runs, failed others. **Time-travel did NOT help** — `FOR TIMESTAMP AS OF`
+and `FOR VERSION AS OF <snapshot>` failed with the same error.
+
+**Root cause — Trino's coordinator metadata cache serving a STALE snapshot.** Trino caches `metadata.json`
+in coordinator memory (`iceberg.metadata-cache.enabled`, default `true`). On a hot table, that cached metadata
+kept pointing at a snapshot whose deletion-vector/data files Databricks had already **VACUUMed**
+(Predictive Optimization / auto-VACUUM is on by default for UC-managed tables). Every query that reused the
+stale cache tried to read files that no longer existed → the DV read error. The intermittency was the cache
+refreshing on its own TTL (current sometimes, stale other times); pinned/time-travel reads failed the same way
+because they still resolved file locations through the stale cache layer. Diagnostic tell: because `SELECT`
+**did** succeed sometimes, Trino's DV *reader* is fine — the failures were **missing files**, not a
+reader-capability gap.
+
+**Fix (confirmed working).** Disable the coordinator metadata cache on the UC catalog so Trino re-resolves the
+**current** UC snapshot on every query (which only references files that still exist):
+```properties
+# infra/trino/catalog/unity_catalog.properties
+iceberg.metadata-cache.enabled=false
+```
+`docker compose restart trino` to apply. After this, `SELECT` / `count` / filtered reads run cleanly, no DV errors.
+
+**Caveat / tradeoff.** Metadata is no longer cached, so each query does an extra metadata round-trip to the UC
+REST endpoint + ADLS — slightly higher per-query latency (negligible at reference-table volumes; revisit with
+file-system caching only if it bites on high-volume or many-snapshot tables). **Keep the coordinator cache OFF
+for any live read of a fast-changing UC-managed table.**
+
+**Producer-side insurance (optional, not required now).** For the highest-churn tables, so even a
+freshly-resolved snapshot's files can't be reclaimed mid-read: on Databricks disable deletion vectors →
+copy-on-write (`ALTER TABLE … SET TBLPROPERTIES (delta.enableDeletionVectors=false)` + `OPTIMIZE`), raise
+`delta.deletedFileRetentionDuration`, and rein in Predictive Optimization / auto-VACUUM on externally-read
+tables. Not needed to unblock reads once the metadata cache is off, but hardens the direct-read path.
+
+> **Relevance to the go-forward.** The team is moving dbt pipelines to read UC-managed Iceberg reference tables
+> **directly** (retiring the Python reference-sync *copy* for reads; the sync code/tables stay in place). This
+> metadata-cache setting is a **prerequisite** for that direct-read design to be reliable — it must be off on the
+> `unity_catalog` catalog before repointing the models. See the SSOT §4 next-step plan.
+
+---
+
 ## 10. Open items (remaining after this round of testing)
 
 1. Isolate the §3 root cause (capture the full delete-writer stack at DEBUG; test a UC-managed table **without**
